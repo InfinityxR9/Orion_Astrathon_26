@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aurora Forecast Platform</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Leaflet Heat plugin -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+
+    <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header id="header">
+            <div class="header-left">
+                <h1>Aurora Forecast</h1>
+                <span class="subtitle">Real-time Aurora Visibility Platform</span>
+            </div>
+            <div class="header-right">
+                <div id="status-indicator" class="status-dot offline"></div>
+                <span id="status-text">Connecting...</span>
+                <span id="last-update" class="meta-text"></span>
+            </div>
+        </header>
+
+        <!-- Main content -->
+        <div id="main-content">
+            <!-- Map -->
+            <div id="map-container">
+                <div id="map"></div>
+            </div>
+
+            <!-- Side Panel -->
+            <aside id="side-panel">
+                <!-- Alert Banner -->
+                <div id="alert-banner" class="hidden">
+                    <div class="alert-icon">&#9888;</div>
+                    <div id="alert-content">
+                        <div id="alert-title">Aurora Alert</div>
+                        <div id="alert-messages"></div>
+                    </div>
+                </div>
+
+                <!-- Visibility Score Card -->
+                <div class="card" id="visibility-card">
+                    <h2>Visibility Score</h2>
+                    <div id="score-display">
+                        <div id="score-ring">
+                            <svg viewBox="0 0 120 120">
+                                <circle class="ring-bg" cx="60" cy="60" r="52" />
+                                <circle class="ring-fg" id="score-arc" cx="60" cy="60" r="52" />
+                            </svg>
+                            <div id="score-value">--</div>
+                            <div id="score-label">Loading</div>
+                        </div>
+                    </div>
+                    <div id="score-breakdown">
+                        <div class="breakdown-item">
+                            <span class="breakdown-label">Aurora Probability</span>
+                            <div class="breakdown-bar"><div class="bar-fill" id="bar-aurora"></div></div>
+                            <span class="breakdown-value" id="val-aurora">--</span>
+                        </div>
+                        <div class="breakdown-item">
+                            <span class="breakdown-label">Sky Darkness</span>
+                            <div class="breakdown-bar"><div class="bar-fill" id="bar-darkness"></div></div>
+                            <span class="breakdown-value" id="val-darkness">--</span>
+                        </div>
+                        <div class="breakdown-item">
+                            <span class="breakdown-label">Cloud Clarity</span>
+                            <div class="breakdown-bar"><div class="bar-fill" id="bar-cloud"></div></div>
+                            <span class="breakdown-value" id="val-cloud">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Solar Wind Card -->
+                <div class="card" id="solar-wind-card">
+                    <h2>Solar Wind</h2>
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <span class="data-label">Bz (GSM)</span>
+                            <span class="data-value" id="sw-bz">-- nT</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Speed</span>
+                            <span class="data-value" id="sw-speed">-- km/s</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Density</span>
+                            <span class="data-value" id="sw-density">-- /cm³</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Bt</span>
+                            <span class="data-value" id="sw-bt">-- nT</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Est. Kp</span>
+                            <span class="data-value" id="sw-kp">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Location Card -->
+                <div class="card" id="location-card">
+                    <h2>Your Location</h2>
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <span class="data-label">Latitude</span>
+                            <span class="data-value" id="loc-lat">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Longitude</span>
+                            <span class="data-value" id="loc-lon">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Temperature</span>
+                            <span class="data-value" id="loc-temp">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Cloud Cover</span>
+                            <span class="data-value" id="loc-cloud">--</span>
+                        </div>
+                    </div>
+                    <button id="btn-locate" class="btn-primary">Use My Location</button>
+                </div>
+
+                <!-- Info Card -->
+                <div class="card card-info">
+                    <p>Click anywhere on the map to check aurora visibility at that location. Data refreshes every 60 seconds from NOAA SWPC.</p>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
