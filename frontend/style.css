@@ -82,6 +82,7 @@ body::before {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-width: 0;
 }
 
 .eyebrow {
@@ -117,6 +118,7 @@ body::before {
     gap: 10px;
     flex-wrap: wrap;
     justify-content: flex-end;
+    min-width: 0;
 }
 
 .status-pill,
@@ -131,6 +133,7 @@ body::before {
     border-radius: 999px;
     backdrop-filter: blur(14px);
     box-shadow: var(--shadow-sm);
+    min-width: 0;
 }
 
 .status-pill {
@@ -301,6 +304,7 @@ body::before {
     flex-shrink: 0;
     min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 18px;
     background:
         linear-gradient(180deg, rgba(9, 17, 29, 0.98), rgba(7, 13, 22, 0.98));
@@ -334,6 +338,7 @@ body::before {
 
 .card {
     padding: 18px;
+    min-width: 0;
 }
 
 .card-hero {
@@ -519,6 +524,14 @@ body::before {
     font-size: 0.82rem;
 }
 
+.coordinate-inputs {
+    margin-top: 14px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    min-width: 0;
+}
+
 .card-info {
     background: rgba(11, 22, 35, 0.82);
 }
@@ -557,6 +570,8 @@ body::before {
     font-weight: 700;
     color: var(--text-primary);
     font-variant-numeric: tabular-nums;
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .data-value.val-negative {
@@ -773,12 +788,14 @@ body::before {
     grid-template-columns: 1fr 1fr;
     gap: 10px;
     margin-top: 14px;
+    min-width: 0;
 }
 
 .field-control {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    min-width: 0;
 }
 
 .field-label {
@@ -810,10 +827,14 @@ body::before {
     display: flex;
     align-items: center;
     gap: 10px;
+    width: 100%;
+    min-width: 0;
 }
 
 .slider-control {
     flex: 1;
+    width: 100%;
+    min-width: 0;
     -webkit-appearance: none;
     appearance: none;
     height: 6px;
@@ -878,6 +899,7 @@ body::before {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
+    flex-wrap: wrap;
     gap: 12px;
 }
 
@@ -957,6 +979,14 @@ body::before {
     font: inherit;
 }
 
+.coordinate-inputs input[type="number"] {
+    width: 100%;
+}
+
+#btn-go-coordinates {
+    margin-top: 10px;
+}
+
 .modal-inner input[type="range"] {
     accent-color: var(--accent-green);
 }
@@ -1019,6 +1049,47 @@ body::before {
     color: var(--text-primary) !important;
     border-color: var(--border-color) !important;
 }
+
+    /* Custom map zoom buttons — vertically centered on left edge */
+    #map-zoom-btns {
+        position: absolute;
+        left: 16px;
+        top: 50%;
+        transform: translateY(-50%);
+        z-index: 910;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        pointer-events: all;
+    }
+
+    .map-zoom-btn {
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        border: 1px solid var(--border-color);
+        background: rgba(13, 24, 39, 0.92);
+        color: var(--text-primary);
+        font-size: 1.3rem;
+        line-height: 1;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        backdrop-filter: blur(14px);
+        box-shadow: var(--shadow-sm);
+        transition: background 0.15s ease, border-color 0.15s ease;
+        user-select: none;
+    }
+
+    .map-zoom-btn:hover {
+        background: rgba(28, 50, 78, 0.96);
+        border-color: var(--border-strong);
+    }
+
+    .map-zoom-btn:active {
+        background: rgba(40, 70, 110, 0.96);
+    }
 
 .leaflet-control-attribution {
     background: rgba(6, 12, 21, 0.82) !important;
@@ -1223,6 +1294,10 @@ body::before {
         grid-template-columns: 1fr;
     }
 
+    .coordinate-inputs {
+        grid-template-columns: 1fr;
+    }
+
     #map-focus,
     #map-legend {
         max-width: calc(100% - 24px);
@@ -1231,4 +1306,34 @@ body::before {
     #kp-chart-box {
         max-width: calc(100% - 24px);
     }
+}
+
+/* ─── Offline PWA Banner ─────────────────────────────────────────────────── */
+.offline-banner {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 4000;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 22px;
+    background: rgba(255, 98, 125, 0.14);
+    border-top: 1px solid rgba(255, 98, 125, 0.32);
+    backdrop-filter: blur(14px);
+    color: var(--accent-red);
+    font-size: 0.84rem;
+    font-weight: 500;
+    transition: opacity 0.3s ease;
+}
+
+.offline-banner.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.offline-banner-icon {
+    font-size: 1.05rem;
+    flex-shrink: 0;
 }

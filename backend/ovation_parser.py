@@ -47,9 +47,17 @@ def _parse_ovation(data: Dict[str, Any]) -> Dict[str, Any]:
 
     points = []
     for entry in coordinates:
-        lon = entry[0]
-        lat = entry[1]
-        prob = entry[2]
+        if not isinstance(entry, (list, tuple)) or len(entry) < 3:
+            continue
+        try:
+            lon = float(entry[0])
+            lat = float(entry[1])
+            prob = float(entry[2])
+        except (TypeError, ValueError):
+            continue
+        if not (-90.0 <= lat <= 90.0):
+            continue
+        prob = max(0.0, min(prob, 100.0))
         if prob < 2:
             continue
         if lon > 180:
@@ -75,40 +83,78 @@ def get_aurora_probability_at(lat: float, lon: float, grid: Dict[str, Any] = Non
     nearest-neighbor search with cosine-corrected longitude distance.
     Falls back to brute-force if numpy arrays haven't been built yet.
     """
-    # Take a single reference to the tuple so both branches see a consistent snapshot
+    return get_aurora_lookup_diagnostics(lat, lon, grid=grid)["probability"]
+
+
+def get_aurora_lookup_diagnostics(
+    lat: float,
+    lon: float,
+    grid: Dict[str, Any] = None,
+) -> Dict[str, float | str]:
+    """
+    Return nearest-point lookup diagnostics for transparency in scoring payloads.
+    """
+    distance_cutoff_deg = 3.0
+
+    # Take a single reference so readers see a consistent snapshot.
     snapshot = _grid_data
 
-    # Fast path: numpy arrays available
     if snapshot is not None and len(snapshot[0]) > 0:
         grid_lats, grid_lons, grid_probs = snapshot
         cos_lat = np.cos(np.radians(lat))
         dlat = grid_lats - lat
         dlon = (grid_lons - lon)
-        # wrap longitude difference to [-180, 180]
         dlon = (dlon + 180) % 360 - 180
         dist_sq = dlat ** 2 + (dlon * cos_lat) ** 2
-        idx = np.argmin(dist_sq)
-        if dist_sq[idx] > 9.0:  # >~3 deg away
-            return 0.0
-        return float(min(grid_probs[idx], 100.0))
+        idx = int(np.argmin(dist_sq))
+        nearest_distance_deg = float(np.sqrt(float(dist_sq[idx])))
+        if dist_sq[idx] > distance_cutoff_deg ** 2:
+            return {
+                "probability": 0.0,
+                "nearest_distance_deg": round(nearest_distance_deg, 3),
+                "distance_cutoff_deg": distance_cutoff_deg,
+                "lookup_method": "nearest_neighbor_numpy",
+            }
+        return {
+            "probability": float(min(grid_probs[idx], 100.0)),
+            "nearest_distance_deg": round(nearest_distance_deg, 3),
+            "distance_cutoff_deg": distance_cutoff_deg,
+            "lookup_method": "nearest_neighbor_numpy",
+        }
 
-    # Slow fallback: iterate grid dict
     if grid is None:
         grid = fetch_ovation_data()
     points = grid.get("points", [])
     if not points:
-        return 0.0
+        return {
+            "probability": 0.0,
+            "nearest_distance_deg": None,
+            "distance_cutoff_deg": distance_cutoff_deg,
+            "lookup_method": "nearest_neighbor_grid_fallback",
+        }
 
     cos_lat = np.cos(np.radians(lat))
     best_prob = 0.0
     best_dist_sq = float("inf")
-    for p in points:
-        dlat = p["lat"] - lat
-        dlon = ((p["lon"] - lon) + 180) % 360 - 180
+    for point in points:
+        dlat = point["lat"] - lat
+        dlon = ((point["lon"] - lon) + 180) % 360 - 180
         dist_sq = dlat ** 2 + (dlon * cos_lat) ** 2
         if dist_sq < best_dist_sq:
             best_dist_sq = dist_sq
-            best_prob = p["prob"]
-    if best_dist_sq > 9.0:
-        return 0.0
-    return min(best_prob, 100.0)
+            best_prob = point["prob"]
+
+    nearest_distance_deg = float(np.sqrt(best_dist_sq))
+    if best_dist_sq > distance_cutoff_deg ** 2:
+        return {
+            "probability": 0.0,
+            "nearest_distance_deg": round(nearest_distance_deg, 3),
+            "distance_cutoff_deg": distance_cutoff_deg,
+            "lookup_method": "nearest_neighbor_grid_fallback",
+        }
+    return {
+        "probability": float(min(best_prob, 100.0)),
+        "nearest_distance_deg": round(nearest_distance_deg, 3),
+        "distance_cutoff_deg": distance_cutoff_deg,
+        "lookup_method": "nearest_neighbor_grid_fallback",
+    }

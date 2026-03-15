@@ -74,6 +74,21 @@ async def root():
     return {"message": "Aurora Forecast API running. Frontend not found."}
 
 
+@app.get("/sw.js")
+async def service_worker():
+    """Serve the PWA service worker from the root path so it has full-app scope."""
+    sw_path = os.path.join(FRONTEND_DIR, "sw.js")
+    return FileResponse(sw_path, media_type="application/javascript",
+                        headers={"Service-Worker-Allowed": "/"})
+
+
+@app.get("/manifest.json")
+async def web_manifest():
+    """Serve the PWA web app manifest."""
+    manifest_path = os.path.join(FRONTEND_DIR, "manifest.json")
+    return FileResponse(manifest_path, media_type="application/manifest+json")
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Data API endpoints
 # ═══════════════════════════════════════════════════════════════════════════
@@ -152,6 +167,7 @@ async def better_viewing_spot(
     lon: float = Query(..., ge=-180, le=180),
     search_radius_km: float = Query(180.0, ge=30.0, le=400.0),
     min_improvement: float = Query(15.0, ge=5.0, le=40.0),
+    max_weather_checks_per_ring: int = Query(4, ge=1, le=8),
 ):
     """
     On-demand nearby recommendation for a materially better aurora viewing spot.
@@ -164,6 +180,7 @@ async def better_viewing_spot(
         aurora_grid=grid,
         search_radius_km=search_radius_km,
         min_improvement=min_improvement,
+        max_weather_checks_per_ring=max_weather_checks_per_ring,
     )
     return JSONResponse(content=result)
 

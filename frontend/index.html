@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aurora Forecast Platform</title>
+    <title>Aurora Forecast Platform – Team DOMINATORS</title>
+    <meta name="theme-color" content="#06101a">
+    <link rel="manifest" href="/manifest.json">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
@@ -21,7 +23,7 @@
     <!-- Header -->
     <header id="header">
         <div class="header-left">
-            <span class="eyebrow">Orion Astrathon Demo</span>
+            <span class="eyebrow">Orion Astrathon: Team DOMINATORS</span>
             <div class="title-block">
                 <h1>Aurora Forecast</h1>
                 <span class="subtitle">Hyper-local aurora nowcasting for observers and astrophotographers</span>
@@ -44,6 +46,12 @@
         <div id="map-container">
             <div id="map"></div>
             <div class="map-vignette"></div>
+            <!-- Custom zoom buttons: vertically centered on left edge of map -->
+            <div id="map-zoom-btns">
+                <button id="zoom-in" class="map-zoom-btn" aria-label="Zoom in">+</button>
+                <button id="zoom-out" class="map-zoom-btn" aria-label="Zoom out">&#x2212;</button>
+            </div>
+
             <div id="map-focus" class="map-overlay-card">
                 <div class="map-overlay-label">Interactive OVATION Map</div>
                 <div class="map-overlay-copy">Seamless east-west world wrap with a softer aurora heat layer for honest regional context.</div>
@@ -169,6 +177,17 @@
                     <span class="card-chip subtle-chip">Selected Point</span>
                 </div>
                 <div id="location-focus" class="location-focus">Click the map or use your device location for a local viewing forecast.</div>
+                <div class="coordinate-inputs">
+                    <label class="field-control">
+                        <span class="field-label">Latitude</span>
+                        <input id="coord-lat" class="select-control" type="number" min="-90" max="90" step="0.001" value="64.000">
+                    </label>
+                    <label class="field-control">
+                        <span class="field-label">Longitude</span>
+                        <input id="coord-lon" class="select-control" type="number" min="-180" max="180" step="0.001" value="-21.000">
+                    </label>
+                </div>
+                <button id="btn-go-coordinates" class="btn-secondary">Go to Coordinates</button>
                 <div class="data-grid">
                     <div class="data-item">
                         <span class="data-label">Latitude</span>
@@ -350,8 +369,21 @@
 
     <!-- Toast notification -->
     <div id="toast" class="toast hidden"></div>
+
+    <!-- Offline Banner -->
+    <div id="offline-banner" class="offline-banner hidden">
+        <span class="offline-banner-icon">&#9888;</span>
+        <span>You are offline. Showing last cached forecast data. Live updates will resume when connectivity is restored.</span>
+    </div>
 </div>
 
 <script src="/static/app.js"></script>
+<script>
+    if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+            navigator.serviceWorker.register("/sw.js").catch(() => {});
+        });
+    }
+</script>
 </body>
 </html>

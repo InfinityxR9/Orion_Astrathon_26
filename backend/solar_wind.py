@@ -78,8 +78,12 @@ def _fetch_mag_data(url: str) -> dict:
         resp = requests.get(url, timeout=TIMEOUT)
         resp.raise_for_status()
         rows = resp.json()
+        if not isinstance(rows, list) or len(rows) < 2:
+            return _empty_mag()
         # Header row then data rows
         for row in reversed(rows[1:]):
+            if not isinstance(row, list) or len(row) < 7:
+                continue
             bz = _safe_float(row[3])
             if bz is not None:
                 return {
@@ -112,7 +116,11 @@ def _fetch_plasma_data(url: str) -> dict:
         resp = requests.get(url, timeout=TIMEOUT)
         resp.raise_for_status()
         rows = resp.json()
+        if not isinstance(rows, list) or len(rows) < 2:
+            return _empty_plasma()
         for row in reversed(rows[1:]):
+            if not isinstance(row, list) or len(row) < 4:
+                continue
             speed = _safe_float(row[2])
             if speed is not None:
                 return {

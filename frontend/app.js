@@ -36,7 +36,22 @@ document.addEventListener("DOMContentLoaded", () => {
     loadAll();
     connectWebSocket();
 
+    // PWA offline / online event listeners
+    window.addEventListener("online", () => { setOnline(); loadAll(); });
+    window.addEventListener("offline", () => setOffline());
+
     document.getElementById("btn-locate").addEventListener("click", geolocate);
+    document.getElementById("btn-go-coordinates").addEventListener("click", goToCoordinates);
+    document.getElementById("coord-lat").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            goToCoordinates();
+        }
+    });
+    document.getElementById("coord-lon").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            goToCoordinates();
+        }
+    });
     document.getElementById("btn-better-spot").addEventListener("click", findBetterViewingSpot);
     document.getElementById("btn-route").addEventListener("click", getDirections);
     document.getElementById("btn-report").addEventListener("click", openSightingModal);
@@ -74,12 +89,16 @@ function initMap() {
         zoom: 3,
         minZoom: 2,
         maxZoom: 10,
-        zoomControl: true,
+        zoomControl: false,
         worldCopyJump: true,
         preferCanvas: true,
         maxBounds: MAP_VERTICAL_BOUNDS,
         maxBoundsViscosity: 1.0,
     });
+
+    // Custom zoom buttons at vertical center of map - wired below after DOM elements exist
+    document.getElementById("zoom-in").addEventListener("click", () => map.zoomIn());
+    document.getElementById("zoom-out").addEventListener("click", () => map.zoomOut());
 
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
         attribution:
@@ -133,11 +152,13 @@ function initMap() {
     map.on("click", (event) => {
         selectedLat = roundCoord(event.latlng.lat);
         selectedLon = roundCoord(event.latlng.lng);
+        syncCoordinateInputs(selectedLat, selectedLon);
         setClickMarker(selectedLat, selectedLon);
         resetBetterSpotState();
         loadVisibility(selectedLat, selectedLon);
     });
 
+    syncCoordinateInputs(selectedLat, selectedLon);
     setClickMarker(selectedLat, selectedLon);
 }
 
@@ -173,10 +194,12 @@ function clearRecommendationMapLayers() {
 
 async function loadAuroraGrid() {
     try {
-        const response = await fetch(`${API}/aurora-grid`);
-        const data = await response.json();
+        const data = await fetchJson(`${API}/aurora-grid`, "aurora-grid");
         if (data.points && data.points.length) {
             heatLayer.setLatLngs(buildWrappedHeatPoints(data.points));
+        } else {
+            heatLayer.setLatLngs([]);
+            showToast("Aurora grid returned no active points right now.", "warn");
         }
         setOnline();
     } catch (error) {
@@ -187,8 +210,7 @@ async function loadAuroraGrid() {
 
 async function loadSolarWind() {
     try {
-        const response = await fetch(`${API}/solar-wind`);
-        const data = await response.json();
+        const data = await fetchJson(`${API}/solar-wind`, "solar-wind");
         const magnetic = data.magnetic_field || {};
         const plasma = data.plasma || {};
 
@@ -225,8 +247,7 @@ async function loadSolarWind() {
 
 async function loadAlerts() {
     try {
-        const response = await fetch(`${API}/alerts`);
-        const data = await response.json();
+        const data = await fetchJson(`${API}/alerts`, "alerts");
         renderAlerts(data);
     } catch (error) {
         console.error("alerts:", error);
@@ -266,14 +287,17 @@ function renderAlerts(data) {
 async function loadVisibility(lat, lon) {
     try {
         const normalizedLon = normalizeLongitude(lon);
+        syncCoordinateInputs(lat, normalizedLon);
         setText("loc-lat", lat.toFixed(3));
         setText("loc-lon", normalizedLon.toFixed(3));
         setText(
             "location-focus",
             `Selected observation point at ${lat.toFixed(3)}, ${normalizedLon.toFixed(3)}. Local conditions refresh continuously for fast field decisions.`
         );
-        const response = await fetch(`${API}/visibility-score?lat=${lat}&lon=${normalizedLon}`);
-        const data = await response.json();
+        const data = await fetchJson(
+            `${API}/visibility-score?lat=${lat}&lon=${normalizedLon}`,
+            "visibility-score"
+        );
         currentVisibilitySnapshot = data;
         updateScoreDisplay(data);
         updateTimestamp(data.timestamp);
@@ -284,8 +308,7 @@ async function loadVisibility(lat, lon) {
 
 async function loadTerminator() {
     try {
-        const response = await fetch(`${API}/terminator`);
-        const data = await response.json();
+        const data = await fetchJson(`${API}/terminator`, "terminator");
         if (!data.points || !data.points.length) {
             return;
         }
@@ -317,8 +340,7 @@ async function loadTerminator() {
 
 async function loadKpChart() {
     try {
-        const response = await fetch(`${API}/kp-timeline`);
-        const data = await response.json();
+        const data = await fetchJson(`${API}/kp-timeline`, "kp-timeline");
         drawKpChart(data.history || []);
     } catch (error) {
         console.error("kp-timeline:", error);
@@ -327,8 +349,7 @@ async function loadKpChart() {
 
 async function loadSightings() {
     try {
-        const response = await fetch(`${API}/sightings`);
-        const data = await response.json();
+        const data = await fetchJson(`${API}/sightings`, "sightings");
         renderSightings(data.sightings || []);
     } catch (error) {
         console.error("sightings:", error);
@@ -352,15 +373,20 @@ async function findBetterViewingSpot() {
     setBetterSpotBusy(true);
     setText("better-spot-status", "Scanning nearby rings for a materially better viewing spot...");
     const requestToken = ++betterSpotRequestToken;
+    const requestStarted = performance.now();
 
     try {
         const response = await fetch(
             `${API}/better-viewing-spot?lat=${selectedLat}&lon=${normalizedLon}&search_radius_km=${radius}&min_improvement=${minImprovement}`
         );
+        if (!response.ok) {
+            throw new Error(`better-viewing-spot failed (${response.status})`);
+        }
         const data = await response.json();
         if (requestToken !== betterSpotRequestToken) {
             return;
         }
+        data.client_elapsed_ms = Math.round(performance.now() - requestStarted);
         betterSpotResult = data;
         renderBetterSpotResult(data);
 
@@ -453,7 +479,7 @@ function renderBetterSpotResult(data) {
 
     setText(
         "better-spot-meta",
-        `${data.evaluated_candidates} full checks after ${data.screened_candidates} candidate screens`
+        `${data.evaluated_candidates} full checks after ${data.screened_candidates} candidate screens | API ${Math.round(data.processing_ms || 0)} ms, client ${Math.round(data.client_elapsed_ms || 0)} ms`
     );
     setText("better-current-score", formatScore(data.origin.visibility_score));
     setText("better-destination-score", formatScore(destination.visibility_score));
@@ -578,11 +604,19 @@ function scoreColor(score) {
 function setOnline() {
     document.getElementById("status-indicator").className = "status-dot online";
     setText("status-text", "Live NOAA feed");
+    _setOfflineBanner(false);
 }
 
 function setOffline() {
     document.getElementById("status-indicator").className = "status-dot offline";
-    setText("status-text", "Reconnecting");
+    const label = navigator.onLine ? "Reconnecting" : "Offline \u2013 Cached Data";
+    setText("status-text", label);
+    _setOfflineBanner(!navigator.onLine);
+}
+
+function _setOfflineBanner(show) {
+    const banner = document.getElementById("offline-banner");
+    if (banner) banner.classList.toggle("hidden", !show);
 }
 
 function updateTimestamp(sourceTime = null) {
@@ -776,6 +810,7 @@ function geolocate() {
         (position) => {
             selectedLat = roundCoord(position.coords.latitude);
             selectedLon = roundCoord(position.coords.longitude);
+            syncCoordinateInputs(selectedLat, selectedLon);
             map.setView([selectedLat, selectedLon], 5);
             setClickMarker(selectedLat, selectedLon);
             userMarkers = syncWrappedMarkers(userMarkers, selectedLat, selectedLon, createUserMarker);
@@ -788,6 +823,31 @@ function geolocate() {
         },
         () => showToast("Unable to get location. Click map instead.", "warn")
     );
+}
+
+function goToCoordinates() {
+    const latInput = document.getElementById("coord-lat");
+    const lonInput = document.getElementById("coord-lon");
+    const lat = Number(latInput.value);
+    const lon = Number(lonInput.value);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        showToast("Enter valid numeric coordinates.", "warn");
+        return;
+    }
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        showToast("Latitude must be -90 to 90 and longitude -180 to 180.", "warn");
+        return;
+    }
+
+    selectedLat = roundCoord(lat);
+    selectedLon = roundCoord(normalizeLongitude(lon));
+    syncCoordinateInputs(selectedLat, selectedLon);
+    map.setView([selectedLat, selectedLon], 5);
+    setClickMarker(selectedLat, selectedLon);
+    resetBetterSpotState();
+    loadVisibility(selectedLat, selectedLon);
+    showToast("Jumped to coordinates.", "ok");
 }
 
 function showToast(message, type = "ok") {
@@ -803,6 +863,29 @@ function setText(id, text) {
     if (element) {
         element.textContent = text;
     }
+}
+
+function syncCoordinateInputs(lat, lon) {
+    const latInput = document.getElementById("coord-lat");
+    const lonInput = document.getElementById("coord-lon");
+    if (latInput) {
+        latInput.value = Number(lat).toFixed(3);
+    }
+    if (lonInput) {
+        lonInput.value = Number(normalizeLongitude(lon)).toFixed(3);
+    }
+}
+
+async function fetchJson(url, label) {
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`${label} request failed (${response.status})`);
+    }
+    const data = await response.json();
+    if (data == null || typeof data !== "object") {
+        throw new Error(`${label} response was not valid JSON object`);
+    }
+    return data;
 }
 
 function fmtV(value, suffix, decimals) {
@@ -916,6 +999,13 @@ function buildScoreSummary(data) {
     const darkness = data.darkness_score ?? 0;
     const cloud = data.cloud_score ?? 0;
     const score = data.visibility_score ?? 0;
+    const lookup = data.aurora_lookup || {};
+    const nearestDistance = lookup.nearest_distance_deg;
+    const cutoff = lookup.distance_cutoff_deg;
+
+    if (aurora <= 0 && nearestDistance != null && cutoff != null && nearestDistance > cutoff) {
+        return `No OVATION aurora cell is within ${cutoff.toFixed(1)} deg of this point (nearest is ${nearestDistance.toFixed(1)} deg), so local aurora probability is zero right now.`;
+    }
 
     if (aurora < 5) {
         return "No significant aurora probability at this location. The OVATION model shows minimal geomagnetic activity here. Try a location closer to the auroral oval.";

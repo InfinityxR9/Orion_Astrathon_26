@@ -8,18 +8,20 @@ Computes a composite visibility score (0-100) combining:
 Also provides photography camera-settings recommendations.
 
 Formula:
-  visibility_score = 100 * A^0.9 * (0.10 + 0.50 * D + 0.40 * C)
-  where:
-    A = aurora_probability / 100
+    A_norm = min(aurora_probability / 30, 1.0)
     D = sky_darkness / 100
     C = cloud_clarity / 100
+
+    visibility_score = 100 * A_norm * sqrt(D) * sqrt(C)
 """
 
 import math
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from ovation_parser import get_aurora_probability_at
+from ovation_parser import get_aurora_probability_at, get_aurora_lookup_diagnostics
 from weather import fetch_weather
 
 # Minimal city lookup for rough Bortle estimation.
@@ -49,6 +51,9 @@ _BORTLE_CITIES = [
     (64.84, -147.72, 4),  # Fairbanks
 ]
 
+VISIBILITY_MODEL_ID = "v3_linear_aurora_sqrt_darkness_sqrt_cloud"
+PREVIOUS_VISIBILITY_MODEL_ID = "v2_linear_aurora_weighted_darkness_cloud"
+
 
 def compute_visibility(lat: float, lon: float, aurora_grid=None) -> Dict[str, Any]:
     """
@@ -56,13 +61,15 @@ def compute_visibility(lat: float, lon: float, aurora_grid=None) -> Dict[str, An
     Returns composite score, sub-scores, and photography recommendations.
     """
     now_utc = datetime.now(timezone.utc)
-    aurora_prob = get_aurora_probability_at(lat, lon, grid=aurora_grid)
+    lookup = get_aurora_lookup_diagnostics(lat, lon, grid=aurora_grid)
+    aurora_prob = lookup["probability"]
     weather_data = fetch_weather(lat, lon)
     darkness = compute_darkness_score(lat, lon, now_utc)
     return _build_visibility_payload(
         lat=lat,
         lon=lon,
         aurora_prob=aurora_prob,
+        aurora_lookup=lookup,
         weather_data=weather_data,
         darkness=darkness,
         now_utc=now_utc,
@@ -77,12 +84,14 @@ def find_better_viewing_spot(
     min_improvement: float = 15.0,
     ring_step_km: float = 30.0,
     bearings_per_ring: int = 12,
+    max_weather_checks_per_ring: int = 4,
 ) -> Dict[str, Any]:
     """
     Search outward in distance rings and return the nearest location whose
     visibility score beats the origin by a meaningful margin.
     """
     origin_lon = _normalize_longitude(lon)
+    started = time.perf_counter()
     search_time = datetime.now(timezone.utc)
     origin_visibility = compute_visibility(lat, origin_lon, aurora_grid=aurora_grid)
     target_score = origin_visibility["visibility_score"] + min_improvement
@@ -94,6 +103,7 @@ def find_better_viewing_spot(
 
     for radius_km in _build_search_rings(search_radius_km, ring_step_km):
         ring_matches = []
+        weather_queue = []
         for bearing_deg in _build_bearings(bearings_per_ring):
             cand_lat, cand_lon = _destination_point(lat, origin_lon, radius_km, bearing_deg)
             aurora_prob = get_aurora_probability_at(cand_lat, cand_lon, grid=aurora_grid)
@@ -109,13 +119,42 @@ def find_better_viewing_spot(
             if best_case_score < target_score:
                 continue
 
-            weather_data = fetch_weather(cand_lat, cand_lon)
+            weather_queue.append({
+                "lat": cand_lat,
+                "lon": cand_lon,
+                "aurora_prob": aurora_prob,
+                "darkness": darkness,
+                "best_case_score": best_case_score,
+                "bearing_deg": bearing_deg,
+            })
+
+        if weather_queue:
+            weather_queue.sort(key=lambda item: item["best_case_score"], reverse=True)
+
+        selected_seeds = weather_queue[:max_weather_checks_per_ring]
+        weather_results = []
+        if selected_seeds:
+            with ThreadPoolExecutor(max_workers=min(len(selected_seeds), max_weather_checks_per_ring)) as pool:
+                future_map = {
+                    pool.submit(fetch_weather, seed["lat"], seed["lon"]): seed
+                    for seed in selected_seeds
+                }
+                for future in as_completed(future_map):
+                    seed = future_map[future]
+                    try:
+                        weather_data = future.result()
+                    except Exception:
+                        weather_data = fetch_weather(seed["lat"], seed["lon"])
+                    weather_results.append((seed, weather_data))
+
+        for seed, weather_data in weather_results:
             candidate_visibility = _build_visibility_payload(
-                lat=cand_lat,
-                lon=cand_lon,
-                aurora_prob=aurora_prob,
+                lat=seed["lat"],
+                lon=seed["lon"],
+                aurora_prob=seed["aurora_prob"],
+                aurora_lookup=None,
                 weather_data=weather_data,
-                darkness=darkness,
+                darkness=seed["darkness"],
                 now_utc=search_time,
             )
             evaluated_candidates += 1
@@ -127,8 +166,8 @@ def find_better_viewing_spot(
             candidate = _summarize_location(candidate_visibility)
             candidate.update({
                 "distance_km": round(radius_km, 1),
-                "bearing_deg": round(bearing_deg, 1),
-                "direction": _bearing_to_cardinal(bearing_deg),
+                "bearing_deg": round(seed["bearing_deg"], 1),
+                "direction": _bearing_to_cardinal(seed["bearing_deg"]),
                 "improvement": improvement,
             })
 
@@ -157,11 +196,14 @@ def find_better_viewing_spot(
 
     response = {
         "timestamp": search_time.isoformat(),
+        "processing_ms": round((time.perf_counter() - started) * 1000, 1),
         "origin": _summarize_location(origin_visibility),
         "search_radius_km": round(search_radius_km, 1),
         "min_improvement": round(min_improvement, 1),
         "screened_candidates": screened_candidates,
         "evaluated_candidates": evaluated_candidates,
+        "screen_rejections": screened_candidates - evaluated_candidates,
+        "weather_checks_per_ring_limit": max_weather_checks_per_ring,
         "found_better_spot": recommendation is not None,
         "destination": recommendation,
     }
@@ -175,6 +217,7 @@ def find_better_viewing_spot(
         )
         return response
 
+    response["processing_ms"] = round((time.perf_counter() - started) * 1000, 1)
     response["message"] = (
         f"Nearest meaningful improvement is {recommendation['distance_km']:.0f} km "
         f"{recommendation['direction']} with a +{recommendation['improvement']:.0f} score gain."
@@ -227,25 +270,37 @@ def _compute_visibility_score(
     """
     Compute the normalized multiplicative visibility score.
 
-    A = aurora_probability / 100
+    A_norm = min(aurora_probability / 30, 1.0)
     D = sky_darkness / 100
     C = cloud_clarity / 100
 
-    visibility_score = 100 * A^0.9 * (0.10 + 0.50*D + 0.40*C)
+    visibility_score = 100 * A_norm * sqrt(D) * sqrt(C)
 
     This ensures:
-    - Aurora probability is the dominant driver.
-    - Darkness and cloud clarity are genuine multipliers (not just bonuses).
-    - In daylight (D=0) or full cloud (C=0) the score drops significantly.
-    - The 0.10 floor prevents a hard zero when one factor is temporarily
-      unavailable, keeping the score directionally informative.
+    - Aurora probability is still the dominant multiplicative driver.
+    - Darkness acts as a low-light requirement through sqrt(D).
+    - Cloud clarity stays a strong multiplicative veto through sqrt(C).
     """
-    aurora_norm = _normalize_score(aurora_prob)
+    aurora_norm = min(max(aurora_prob, 0.0), 30.0) / 30.0
     darkness_norm = _normalize_score(sky_darkness)
     cloud_norm = _normalize_score(cloud_clarity)
 
-    visibility_score = 100.0 * (aurora_norm ** 0.9) * (
-        0.10 + 0.50 * darkness_norm + 0.40 * cloud_norm
+    visibility_score = 100.0 * aurora_norm * math.sqrt(darkness_norm) * math.sqrt(cloud_norm)
+    return round(min(max(visibility_score, 0.0), 100.0), 1)
+
+
+def _compute_previous_visibility_score(
+    aurora_prob: float,
+    sky_darkness: float,
+    cloud_clarity: float,
+) -> float:
+    """Previous model kept for side-by-side comparison in API responses."""
+    aurora_norm = min(max(aurora_prob, 0.0), 30.0) / 30.0
+    darkness_norm = _normalize_score(sky_darkness)
+    cloud_norm = _normalize_score(cloud_clarity)
+
+    visibility_score = 100.0 * aurora_norm * (
+        0.5 * (darkness_norm ** 2) + 0.5 * (cloud_norm ** 3)
     )
     return round(min(max(visibility_score, 0.0), 100.0), 1)
 
@@ -274,14 +329,29 @@ def _build_visibility_payload(
     lat: float,
     lon: float,
     aurora_prob: float,
+    aurora_lookup: Dict[str, Any] | None,
     weather_data: Dict[str, Any],
     darkness: Dict[str, Any],
     now_utc: datetime,
 ) -> Dict[str, Any]:
     """Build the public visibility payload from precomputed components."""
+    lookup = aurora_lookup or {
+        "lookup_method": "nearest_neighbor_unknown",
+        "nearest_distance_deg": None,
+        "distance_cutoff_deg": 3.0,
+    }
     cloud_score = weather_data["cloud_score"] * 100.0
     geomag_lat = _geomagnetic_latitude(lat, lon)
+    aurora_norm = min(max(aurora_prob, 0.0), 30.0) / 30.0
+    darkness_norm = _normalize_score(darkness["darkness_score"])
+    cloud_norm = _normalize_score(cloud_score)
+
     visibility_score = _compute_visibility_score(
+        aurora_prob=aurora_prob,
+        sky_darkness=darkness["darkness_score"],
+        cloud_clarity=cloud_score,
+    )
+    previous_visibility_score = _compute_previous_visibility_score(
         aurora_prob=aurora_prob,
         sky_darkness=darkness["darkness_score"],
         cloud_clarity=cloud_score,
@@ -293,8 +363,22 @@ def _build_visibility_payload(
         "lat": lat,
         "lon": _normalize_longitude(lon),
         "visibility_score": visibility_score,
+        "visibility_model": VISIBILITY_MODEL_ID,
+        "previous_visibility_model": PREVIOUS_VISIBILITY_MODEL_ID,
+        "previous_visibility_score": previous_visibility_score,
+        "score_delta_vs_previous": round(visibility_score - previous_visibility_score, 1),
+        "score_components": {
+            "aurora_norm": round(aurora_norm, 3),
+            "darkness_norm": round(darkness_norm, 3),
+            "cloud_norm": round(cloud_norm, 3),
+        },
         "rating": rating,
         "aurora_probability": round(aurora_prob, 1),
+        "aurora_lookup": {
+            "lookup_method": lookup["lookup_method"],
+            "nearest_distance_deg": lookup["nearest_distance_deg"],
+            "distance_cutoff_deg": lookup["distance_cutoff_deg"],
+        },
         "darkness_score": round(darkness["darkness_score"], 1),
         "cloud_score": round(cloud_score, 1),
         "is_dark": darkness["is_dark"],

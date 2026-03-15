@@ -1,0 +1,11 @@
+{
+    "name": "Aurora Forecast Platform",
+    "short_name": "Aurora",
+    "description": "Hyper-local aurora nowcasting for observers and astrophotographers — Orion Astrathon, Team DOMINATORS",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#06101a",
+    "theme_color": "#06101a",
+    "orientation": "any",
+    "icons": []
+}
