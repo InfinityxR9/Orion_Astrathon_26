@@ -532,6 +532,27 @@ body::before {
     min-width: 0;
 }
 
+.saved-alert-box {
+    margin-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(130, 162, 201, 0.12);
+    background: rgba(96, 129, 166, 0.06);
+}
+
+#saved-alert-location {
+    margin-top: 8px;
+}
+
+.saved-alert-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
 .card-info {
     background: rgba(11, 22, 35, 0.82);
 }
@@ -1295,6 +1316,10 @@ body::before {
     }
 
     .coordinate-inputs {
+        grid-template-columns: 1fr;
+    }
+
+    .saved-alert-actions {
         grid-template-columns: 1fr;
     }
 

@@ -177,6 +177,23 @@
                     <span class="card-chip subtle-chip">Selected Point</span>
                 </div>
                 <div id="location-focus" class="location-focus">Click the map or use your device location for a local viewing forecast.</div>
+                <div class="saved-alert-box">
+                    <div class="field-control">
+                        <span class="field-label">Saved Alert Location</span>
+                        <div id="saved-alert-location" class="card-note">No saved alert location yet.</div>
+                    </div>
+                    <label class="field-control">
+                        <span class="field-label">Visibility Alert Threshold</span>
+                        <div class="slider-row">
+                            <input type="range" id="alert-threshold" class="slider-control" min="5" max="100" step="1" value="55">
+                            <span id="alert-threshold-label" class="slider-value">55</span>
+                        </div>
+                    </label>
+                    <div class="saved-alert-actions">
+                        <button id="btn-save-alert-location" class="btn-secondary">Save Current Location Alert</button>
+                        <button id="btn-clear-alert-location" class="btn-secondary">Clear Saved Alert</button>
+                    </div>
+                </div>
                 <div class="coordinate-inputs">
                     <label class="field-control">
                         <span class="field-label">Latitude</span>

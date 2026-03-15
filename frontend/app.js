@@ -11,6 +11,7 @@ const MAP_VERTICAL_BOUNDS = [[-85, -720], [85, 720]];
 const AURORA_OVERLAY_MIN_VISIBLE = 2;
 const DEFAULT_BETTER_SPOT_STATUS =
     "Search nearby only when needed to find the nearest location with a meaningfully stronger visibility score.";
+const SAVED_ALERT_CONFIG_KEY = "aurora_saved_alert_v1";
 
 let map;
 let heatLayer;
@@ -29,8 +30,16 @@ let selectedLon = -21.0;
 let currentVisibilitySnapshot = null;
 let betterSpotResult = null;
 let betterSpotRequestToken = 0;
+let savedAlertConfig = {
+    enabled: false,
+    lat: null,
+    lon: null,
+    threshold: 55,
+};
+let savedAlertTriggeredLastState = false;
 
 document.addEventListener("DOMContentLoaded", () => {
+    loadSavedAlertConfig();
     initMap();
     resetBetterSpotState();
     loadAll();
@@ -66,6 +75,21 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("better-improvement").addEventListener("input", (event) => {
         document.getElementById("better-improvement-label").textContent = `+${event.target.value}`;
     });
+
+    document.getElementById("alert-threshold").addEventListener("input", (event) => {
+        const threshold = Number(event.target.value || 55);
+        savedAlertConfig.threshold = threshold;
+        persistSavedAlertConfig();
+        updateSavedAlertUi();
+        // Refresh alerts immediately with updated threshold when enabled
+        if (savedAlertConfig.enabled) {
+            loadAlerts();
+        }
+    });
+    document.getElementById("btn-save-alert-location").addEventListener("click", saveCurrentLocationAlert);
+    document.getElementById("btn-clear-alert-location").addEventListener("click", clearSavedLocationAlert);
+
+    updateSavedAlertUi();
 });
 
 async function loadAll() {
@@ -247,8 +271,22 @@ async function loadSolarWind() {
 
 async function loadAlerts() {
     try {
-        const data = await fetchJson(`${API}/alerts`, "alerts");
+        let url = `${API}/alerts`;
+        if (
+            savedAlertConfig.enabled
+            && Number.isFinite(savedAlertConfig.lat)
+            && Number.isFinite(savedAlertConfig.lon)
+        ) {
+            const q = new URLSearchParams({
+                lat: String(savedAlertConfig.lat),
+                lon: String(savedAlertConfig.lon),
+                threshold: String(savedAlertConfig.threshold),
+            });
+            url = `${url}?${q.toString()}`;
+        }
+        const data = await fetchJson(url, "alerts");
         renderAlerts(data);
+        maybeNotifySavedAlert(data);
     } catch (error) {
         console.error("alerts:", error);
     }
@@ -780,7 +818,13 @@ function connectWebSocket() {
                 setText("sw-summary", buildSolarWindSummary(data.solar_wind));
             }
             if (data.alerts) {
-                renderAlerts(data.alerts);
+                // If user configured location-threshold alerts, refresh from /alerts
+                // with saved params so banner and triggers stay user-specific.
+                if (savedAlertConfig.enabled) {
+                    loadAlerts();
+                } else {
+                    renderAlerts(data.alerts);
+                }
             } else if (data.kp_latest != null) {
                 setText("sw-kp", data.kp_latest.toFixed(1));
             }
@@ -848,6 +892,89 @@ function goToCoordinates() {
     resetBetterSpotState();
     loadVisibility(selectedLat, selectedLon);
     showToast("Jumped to coordinates.", "ok");
+}
+
+function loadSavedAlertConfig() {
+    try {
+        const raw = localStorage.getItem(SAVED_ALERT_CONFIG_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") return;
+
+        savedAlertConfig.enabled = Boolean(parsed.enabled);
+        savedAlertConfig.lat = Number.isFinite(parsed.lat) ? Number(parsed.lat) : null;
+        savedAlertConfig.lon = Number.isFinite(parsed.lon) ? Number(parsed.lon) : null;
+        const threshold = Number(parsed.threshold);
+        savedAlertConfig.threshold = Number.isFinite(threshold)
+            ? Math.min(100, Math.max(5, threshold))
+            : 55;
+    } catch (error) {
+        console.warn("saved-alert load failed:", error);
+    }
+}
+
+function persistSavedAlertConfig() {
+    localStorage.setItem(SAVED_ALERT_CONFIG_KEY, JSON.stringify(savedAlertConfig));
+}
+
+function updateSavedAlertUi() {
+    const thresholdInput = document.getElementById("alert-threshold");
+    const thresholdLabel = document.getElementById("alert-threshold-label");
+    const locationText = document.getElementById("saved-alert-location");
+
+    if (thresholdInput) {
+        thresholdInput.value = String(savedAlertConfig.threshold);
+    }
+    if (thresholdLabel) {
+        thresholdLabel.textContent = String(Math.round(savedAlertConfig.threshold));
+    }
+
+    if (!locationText) return;
+    if (!savedAlertConfig.enabled || !Number.isFinite(savedAlertConfig.lat) || !Number.isFinite(savedAlertConfig.lon)) {
+        locationText.textContent = "No saved alert location yet.";
+        return;
+    }
+
+    locationText.textContent = `Saved at ${savedAlertConfig.lat.toFixed(3)}, ${savedAlertConfig.lon.toFixed(3)} | threshold ${Math.round(savedAlertConfig.threshold)}`;
+}
+
+function saveCurrentLocationAlert() {
+    savedAlertConfig.enabled = true;
+    savedAlertConfig.lat = roundCoord(selectedLat);
+    savedAlertConfig.lon = roundCoord(normalizeLongitude(selectedLon));
+    persistSavedAlertConfig();
+    updateSavedAlertUi();
+    savedAlertTriggeredLastState = false;
+    showToast("Saved in-app alert location and threshold.", "ok");
+    loadAlerts();
+}
+
+function clearSavedLocationAlert() {
+    savedAlertConfig.enabled = false;
+    savedAlertConfig.lat = null;
+    savedAlertConfig.lon = null;
+    persistSavedAlertConfig();
+    updateSavedAlertUi();
+    savedAlertTriggeredLastState = false;
+    showToast("Cleared saved in-app alert.", "warn");
+    loadAlerts();
+}
+
+function maybeNotifySavedAlert(alertData) {
+    const monitor = alertData?.visibility_monitor;
+    const triggered = Boolean(monitor?.enabled && monitor?.triggered);
+
+    // Fire notification only on rising edge to avoid repeated spam each poll.
+    if (triggered && !savedAlertTriggeredLastState) {
+        const score = Number(monitor.current_score || 0);
+        const threshold = Number(monitor.threshold || savedAlertConfig.threshold);
+        showToast(
+            `Saved alert triggered: score ${Math.round(score)} crossed threshold ${Math.round(threshold)}.`,
+            "ok"
+        );
+    }
+
+    savedAlertTriggeredLastState = triggered;
 }
 
 function showToast(message, type = "ok") {

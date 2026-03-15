@@ -9,7 +9,7 @@ import json
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -93,6 +93,15 @@ async def web_manifest():
 # Data API endpoints
 # ═══════════════════════════════════════════════════════════════════════════
 
+@app.get("/health")
+async def health_check():
+    return JSONResponse(content={"status": "healthy"})
+
+
+@app.head("/health")
+async def health_check_head():
+    return JSONResponse(content={"status": "healthy"})
+
 @app.get("/solar-wind")
 async def solar_wind():
     cache = get_cache()
@@ -120,12 +129,43 @@ async def visibility_score(
 
 
 @app.get("/alerts")
-async def alerts():
+async def alerts(
+    lat: Optional[float] = Query(None, ge=-90, le=90),
+    lon: Optional[float] = Query(None, ge=-180, le=180),
+    threshold: float = Query(50.0, ge=0.0, le=100.0),
+):
+    """
+    Alert endpoint with optional user-configured visibility monitor.
+
+    If lat/lon are provided, visibility at that saved location is evaluated and
+    threshold triggers are included in the response.
+    """
     cache = get_cache()
-    data = cache.get("alerts")
-    if data is None:
-        sw = cache.get("solar_wind") or get_solar_wind_data()
-        data = evaluate_alerts(sw)
+    sw = cache.get("solar_wind") or get_solar_wind_data()
+
+    visibility_score = None
+    visibility_payload = None
+    if lat is not None and lon is not None:
+        grid = cache.get("aurora_grid")
+        visibility_payload = compute_visibility(lat, lon, aurora_grid=grid)
+        visibility_score = visibility_payload.get("visibility_score")
+
+    data = evaluate_alerts(
+        sw,
+        visibility_score=visibility_score,
+        user_threshold=threshold,
+    )
+
+    data["visibility_monitor"] = {
+        "enabled": lat is not None and lon is not None,
+        "lat": lat,
+        "lon": lon,
+        "threshold": threshold,
+        "current_score": visibility_score,
+        "triggered": visibility_score is not None and visibility_score >= threshold,
+        "rating": visibility_payload.get("rating") if visibility_payload else None,
+    }
+
     return JSONResponse(content=data)
 
 
