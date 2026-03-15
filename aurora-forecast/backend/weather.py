@@ -44,6 +44,9 @@ def _parse_weather(data: Dict[str, Any]) -> Dict[str, Any]:
     wind_speed = current.get("wind_speed_10m")
     weather_code = current.get("weather_code")
 
+    # Compute once to avoid boundary skew near the top of the hour
+    now_hour = datetime.now(timezone.utc).hour
+
     # Fallback: 'current_weather' block (older API responses)
     if cloud_cover is None:
         cw = data.get("current_weather", {})
@@ -51,7 +54,6 @@ def _parse_weather(data: Dict[str, Any]) -> Dict[str, Any]:
         # Try hourly at current UTC hour index
         hourly = data.get("hourly", {})
         cc_list = hourly.get("cloud_cover", [])
-        now_hour = datetime.now(timezone.utc).hour
         cloud_cover = cc_list[now_hour] if now_hour < len(cc_list) else (cc_list[0] if cc_list else 50.0)
 
     if cloud_cover is None:
@@ -60,7 +62,6 @@ def _parse_weather(data: Dict[str, Any]) -> Dict[str, Any]:
     # Atmospheric visibility from hourly block
     hourly = data.get("hourly", {})
     vis_list = hourly.get("visibility", [])
-    now_hour = datetime.now(timezone.utc).hour
     vis_m = vis_list[now_hour] if now_hour < len(vis_list) else None
     visibility_km = round(vis_m / 1000, 1) if vis_m is not None else None
 

@@ -57,6 +57,17 @@ Open [http://localhost:8000](http://localhost:8000)
 | `/ws` | WebSocket | Real-time push (solar wind + alerts) |
 | `/health` | GET | System health check |
 
+## Visibility Score Formula
+
+```text
+visibility_score = 100 * A^1.8 * (0.65 + 0.20 * D + 0.15 * C)
+```
+
+Where:
+- `A = aurora_probability / 100`
+- `D = sky_darkness / 100`
+- `C = cloud_clarity / 100`
+
 ## Deliverables Implemented
 
 ### D1 - Live Data Pipeline
@@ -71,7 +82,8 @@ Open [http://localhost:8000](http://localhost:8000)
 - 60s auto-refresh + WebSocket push
 
 ### D3 - Visibility Score Engine
-- `0.50 * aurora_prob + 0.30 * darkness + 0.20 * cloud_clarity`
+- `100 * A^1.8 * (0.65 + 0.20 * D + 0.15 * C)`
+- `A = aurora_probability / 100`, `D = sky_darkness / 100`, `C = cloud_clarity / 100`
 - Bortle-class light pollution (city table + latitude proxy)
 - Moon illumination (synodic phase)
 - Solar elevation (Spencer formula)

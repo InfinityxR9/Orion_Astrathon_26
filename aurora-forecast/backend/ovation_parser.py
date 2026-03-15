@@ -12,29 +12,28 @@ from typing import Dict, Any, Optional
 OVATION_URL = "https://services.swpc.noaa.gov/json/ovation_aurora_latest.json"
 TIMEOUT = 15
 
-# Cached numpy arrays for fast lookup
-_grid_lats: Optional[np.ndarray] = None
-_grid_lons: Optional[np.ndarray] = None
-_grid_probs: Optional[np.ndarray] = None
+# Cached numpy arrays for fast lookup stored as a single tuple for atomic read/write.
+# The background scheduler thread writes; the async request handlers read.
+# A single name rebind in CPython is atomic under the GIL, preventing partial views.
+_grid_data: Optional[tuple] = None  # (lats_array, lons_array, probs_array) | None
 
 
 def fetch_ovation_data() -> Dict[str, Any]:
     """Fetch and parse the OVATION aurora probability grid from NOAA."""
-    global _grid_lats, _grid_lons, _grid_probs
+    global _grid_data
     try:
         resp = requests.get(OVATION_URL, timeout=TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
         result = _parse_ovation(data)
-        # Build fast-lookup arrays from ALL coordinates (not just filtered)
+        # Build fast-lookup arrays from ALL coordinates (not just filtered).
+        # Assigned as a single tuple so readers always see a consistent snapshot.
         coords = data.get("coordinates", [])
         if coords:
             arr = np.array(coords, dtype=np.float32)
             raw_lons = arr[:, 0].copy()
             raw_lons[raw_lons > 180] -= 360
-            _grid_lats = arr[:, 1]
-            _grid_lons = raw_lons
-            _grid_probs = arr[:, 2]
+            _grid_data = (arr[:, 1], raw_lons, arr[:, 2])  # (lats, lons, probs)
         return result
     except Exception:
         return {"observation_time": None, "forecast_time": None, "points": [], "point_count": 0}
@@ -76,20 +75,22 @@ def get_aurora_probability_at(lat: float, lon: float, grid: Dict[str, Any] = Non
     nearest-neighbor search with cosine-corrected longitude distance.
     Falls back to brute-force if numpy arrays haven't been built yet.
     """
-    global _grid_lats, _grid_lons, _grid_probs
+    # Take a single reference to the tuple so both branches see a consistent snapshot
+    snapshot = _grid_data
 
     # Fast path: numpy arrays available
-    if _grid_lats is not None and len(_grid_lats) > 0:
+    if snapshot is not None and len(snapshot[0]) > 0:
+        grid_lats, grid_lons, grid_probs = snapshot
         cos_lat = np.cos(np.radians(lat))
-        dlat = _grid_lats - lat
-        dlon = (_grid_lons - lon)
+        dlat = grid_lats - lat
+        dlon = (grid_lons - lon)
         # wrap longitude difference to [-180, 180]
         dlon = (dlon + 180) % 360 - 180
         dist_sq = dlat ** 2 + (dlon * cos_lat) ** 2
         idx = np.argmin(dist_sq)
         if dist_sq[idx] > 9.0:  # >~3 deg away
             return 0.0
-        return float(min(_grid_probs[idx], 100.0))
+        return float(min(grid_probs[idx], 100.0))
 
     # Slow fallback: iterate grid dict
     if grid is None:

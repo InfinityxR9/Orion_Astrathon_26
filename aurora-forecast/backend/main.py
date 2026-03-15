@@ -19,7 +19,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from scheduler import start_scheduler, stop_scheduler, get_cache, get_kp_history
 from solar_wind import get_solar_wind_data, get_bz_history
 from ovation_parser import get_aurora_grid
-from visibility_engine import compute_visibility, compute_terminator
+from visibility_engine import (
+    build_aurora_overlay_grid,
+    compute_terminator,
+    compute_visibility,
+    find_better_viewing_spot,
+)
 from aurora_alerts import evaluate_alerts
 
 # ─── WebSocket clients ──────────────────────────────────────────────────────
@@ -84,7 +89,8 @@ async def solar_wind():
 @app.get("/aurora-grid")
 async def aurora_grid():
     cache = get_cache()
-    data = cache.get("aurora_grid") or get_aurora_grid()
+    raw_grid = cache.get("aurora_grid") or get_aurora_grid()
+    data = build_aurora_overlay_grid(raw_grid)
     return JSONResponse(content=data)
 
 
@@ -138,6 +144,28 @@ async def photo_settings(
     grid = cache.get("aurora_grid")
     vis = compute_visibility(lat, lon, aurora_grid=grid)
     return JSONResponse(content=vis.get("photo_settings", {}))
+
+
+@app.get("/better-viewing-spot")
+async def better_viewing_spot(
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+    search_radius_km: float = Query(180.0, ge=30.0, le=400.0),
+    min_improvement: float = Query(15.0, ge=5.0, le=40.0),
+):
+    """
+    On-demand nearby recommendation for a materially better aurora viewing spot.
+    """
+    cache = get_cache()
+    grid = cache.get("aurora_grid")
+    result = find_better_viewing_spot(
+        lat=lat,
+        lon=lon,
+        aurora_grid=grid,
+        search_radius_km=search_radius_km,
+        min_improvement=min_improvement,
+    )
+    return JSONResponse(content=result)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -199,14 +227,17 @@ async def _ws_broadcast_loop():
             "kp_latest": cache["alerts"]["kp_estimate"] if cache["alerts"] else None,
             "last_updated": cache["last_updated"],
         })
+        # Iterate over a snapshot so concurrent removes from websocket_endpoint
+        # do not cause skipped entries or a RuntimeError mid-loop.
         dead = []
-        for ws in _ws_clients:
+        for ws in list(_ws_clients):
             try:
                 await ws.send_text(payload)
             except Exception:
                 dead.append(ws)
         for ws in dead:
-            _ws_clients.remove(ws)
+            if ws in _ws_clients:
+                _ws_clients.remove(ws)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

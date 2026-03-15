@@ -68,10 +68,13 @@ Navigate to [http://localhost:8000](http://localhost:8000)
 ## Visibility Score Formula
 
 ```
-visibility = 0.5 * aurora_probability
-           + 0.3 * darkness_score
-           + 0.2 * cloud_clarity_score
+visibility_score = 100 * A^1.8 * (0.65 + 0.20 * D + 0.15 * C)
 ```
+
+Where:
+- `A = aurora_probability / 100`
+- `D = sky_darkness / 100`
+- `C = cloud_clarity / 100`
 
 ### Darkness Score Components
 - **Solar elevation** — astronomical/nautical/civil twilight thresholds

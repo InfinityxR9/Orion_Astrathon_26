@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Aurora Forecast Platform</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 
     <!-- Leaflet -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -18,12 +21,17 @@
     <!-- Header -->
     <header id="header">
         <div class="header-left">
-            <h1>Aurora Forecast</h1>
-            <span class="subtitle">Real-time Visibility Platform</span>
+            <span class="eyebrow">Orion Astrathon Demo</span>
+            <div class="title-block">
+                <h1>Aurora Forecast</h1>
+                <span class="subtitle">Hyper-local aurora nowcasting for observers and astrophotographers</span>
+            </div>
         </div>
         <div class="header-right">
-            <div id="status-indicator" class="status-dot offline"></div>
-            <span id="status-text">Connecting...</span>
+            <div class="status-pill">
+                <div id="status-indicator" class="status-dot offline"></div>
+                <span id="status-text">Connecting...</span>
+            </div>
             <span id="data-source" class="meta-text"></span>
             <span id="last-update" class="meta-text"></span>
         </div>
@@ -35,10 +43,34 @@
         <!-- Map -->
         <div id="map-container">
             <div id="map"></div>
+            <div class="map-vignette"></div>
+            <div id="map-focus" class="map-overlay-card">
+                <div class="map-overlay-label">Interactive OVATION Map</div>
+                <div class="map-overlay-copy">Seamless east-west world wrap with a softer aurora heat layer for honest regional context.</div>
+            </div>
             <!-- Floating Kp chart overlay -->
-            <div id="kp-chart-box">
+            <div id="kp-chart-box" class="map-overlay-card">
                 <div id="kp-chart-title">Kp Index (last 4 h)</div>
                 <canvas id="kp-canvas" width="260" height="80"></canvas>
+            </div>
+            <div id="map-legend" class="map-overlay-card">
+                <div class="map-legend-title">Legend</div>
+                <div class="legend-item">
+                    <span class="legend-gradient"></span>
+                    <span class="legend-copy">Aurora heat value low to high: hidden, faint band, moderate glow, strong oval</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-line"></span>
+                    <span class="legend-copy">Day / night terminator</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-night"></span>
+                    <span class="legend-copy">Night-side shading</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-pin"></span>
+                    <span class="legend-copy">Selected observation point</span>
+                </div>
             </div>
         </div>
 
@@ -46,17 +78,23 @@
         <aside id="side-panel">
 
             <!-- Alert Banner -->
-            <div id="alert-banner" class="hidden">
+            <div id="alert-banner" class="alert-banner hidden">
                 <div class="alert-icon">&#9888;</div>
                 <div id="alert-content">
-                    <div id="alert-title">Aurora Alert</div>
+                    <div class="alert-header">
+                        <div id="alert-title">Aurora Alert</div>
+                        <div id="alert-meta" class="alert-meta"></div>
+                    </div>
                     <div id="alert-messages"></div>
                 </div>
             </div>
 
             <!-- Visibility Score Card -->
-            <div class="card" id="visibility-card">
-                <h2>Visibility Score</h2>
+            <div class="card card-hero" id="visibility-card">
+                <div class="card-header">
+                    <h2>Visibility Score</h2>
+                    <span id="score-chip" class="card-chip subtle-chip">Awaiting data</span>
+                </div>
                 <div id="score-display">
                     <div id="score-ring">
                         <svg viewBox="0 0 120 120">
@@ -84,11 +122,17 @@
                         <span class="breakdown-value" id="val-cloud">--</span>
                     </div>
                 </div>
+                <div id="score-summary" class="score-summary">
+                    Select a point on the map to see how aurora probability, darkness, and cloud clarity combine right now.
+                </div>
             </div>
 
             <!-- Solar Wind Card -->
             <div class="card" id="solar-wind-card">
-                <h2>Solar Wind</h2>
+                <div class="card-header">
+                    <h2>Solar Wind</h2>
+                    <span class="card-chip subtle-chip">Nowcast Context</span>
+                </div>
                 <div class="data-grid">
                     <div class="data-item">
                         <span class="data-label">Bz (GSM)</span>
@@ -115,11 +159,16 @@
                         <span class="data-value" id="sw-dbz">-- nT/min</span>
                     </div>
                 </div>
+                <div id="sw-summary" class="card-note">Live solar wind context updates automatically as NOAA data refreshes.</div>
             </div>
 
             <!-- Location + Weather Card -->
             <div class="card" id="location-card">
-                <h2>Location &amp; Weather</h2>
+                <div class="card-header">
+                    <h2>Location &amp; Weather</h2>
+                    <span class="card-chip subtle-chip">Selected Point</span>
+                </div>
+                <div id="location-focus" class="location-focus">Click the map or use your device location for a local viewing forecast.</div>
                 <div class="data-grid">
                     <div class="data-item">
                         <span class="data-label">Latitude</span>
@@ -157,9 +206,93 @@
                 <button id="btn-locate" class="btn-primary">Use My Location</button>
             </div>
 
+            <!-- Better Viewing Spot Card -->
+            <div class="card" id="better-spot-card">
+                <div class="card-header">
+                    <h2>Better Viewing Spot</h2>
+                    <span class="card-chip subtle-chip">On Demand</span>
+                </div>
+                <div id="better-spot-status" class="card-note">
+                    Search nearby only when needed to find the nearest location with a meaningfully stronger visibility score.
+                </div>
+                <div class="recommend-controls">
+                    <label class="field-control">
+                        <span class="field-label">Search Radius</span>
+                        <select id="better-radius" class="select-control">
+                            <option value="120">120 km</option>
+                            <option value="180" selected>180 km</option>
+                            <option value="240">240 km</option>
+                            <option value="320">320 km</option>
+                        </select>
+                    </label>
+                    <label class="field-control">
+                        <span class="field-label">Min Gain</span>
+                        <select id="better-improvement" class="select-control">
+                            <option value="15" selected>+15 score</option>
+                            <option value="20">+20 score</option>
+                            <option value="25">+25 score</option>
+                        </select>
+                    </label>
+                </div>
+                <div id="better-spot-result" class="recommend-result is-hidden">
+                    <div class="recommend-result-head">
+                        <div>
+                            <div class="recommend-title">Suggested Nearby Spot</div>
+                            <div id="better-spot-meta" class="recommend-meta">Awaiting recommendation</div>
+                        </div>
+                        <span id="better-spot-badge" class="card-chip chip-positive">+0</span>
+                    </div>
+                    <div class="data-grid recommend-grid">
+                        <div class="data-item">
+                            <span class="data-label">Current Score</span>
+                            <span class="data-value" id="better-current-score">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Suggested Score</span>
+                            <span class="data-value" id="better-destination-score">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Gain</span>
+                            <span class="data-value" id="better-improvement-value">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Distance</span>
+                            <span class="data-value" id="better-distance">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Direction</span>
+                            <span class="data-value" id="better-direction">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Latitude</span>
+                            <span class="data-value" id="better-lat">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Longitude</span>
+                            <span class="data-value" id="better-lon">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Aurora Prob.</span>
+                            <span class="data-value" id="better-aurora">--</span>
+                        </div>
+                    </div>
+                    <div id="better-spot-reason" class="score-summary">
+                        Recommendations appear here after a search.
+                    </div>
+                </div>
+                <button id="btn-better-spot" class="btn-primary">Find Better Viewing Spot</button>
+                <button id="btn-route" class="btn-secondary is-hidden">Get Directions</button>
+                <div id="route-note" class="route-note is-hidden">
+                    Route preview stays on the map only after you request directions. Turn-by-turn navigation opens externally.
+                </div>
+            </div>
+
             <!-- Photography Advisor Card -->
             <div class="card" id="photo-card">
-                <h2>Photography Advisor</h2>
+                <div class="card-header">
+                    <h2>Photography Advisor</h2>
+                    <span class="card-chip subtle-chip">Field Guide</span>
+                </div>
                 <div class="data-grid">
                     <div class="data-item">
                         <span class="data-label">ISO</span>
@@ -183,7 +316,10 @@
 
             <!-- Community Sightings Card -->
             <div class="card" id="sightings-card">
-                <h2>Community Sightings</h2>
+                <div class="card-header">
+                    <h2>Community Sightings</h2>
+                    <span class="card-chip subtle-chip">Validation Layer</span>
+                </div>
                 <div id="sightings-list" class="sightings-list">
                     <p class="text-muted">No recent sightings.</p>
                 </div>
@@ -192,7 +328,7 @@
 
             <!-- Info -->
             <div class="card card-info">
-                <p>Click the map to check aurora visibility. Data from NOAA SWPC + Open-Meteo. Updates every 30s.</p>
+                <p>OVATION probability, NOAA solar wind, local weather, and sky darkness are combined into a transparent field-ready visibility score. Optimized for low-light use and fast decision-making.</p>
             </div>
         </aside>
     </div>

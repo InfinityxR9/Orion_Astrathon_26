@@ -9,10 +9,13 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from collections import deque
 from datetime import datetime, timezone
 from typing import Dict, Any, List
+import logging
 
 from solar_wind import get_solar_wind_data
 from ovation_parser import get_aurora_grid
 from aurora_alerts import evaluate_alerts, estimate_kp
+
+logger = logging.getLogger(__name__)
 
 # ─── Global cache ───────────────────────────────────────────────────────────
 _cache: Dict[str, Any] = {
@@ -58,7 +61,7 @@ def _refresh_solar_wind():
 
         _cache["last_updated"] = datetime.now(timezone.utc).isoformat()
     except Exception:
-        pass
+        logger.exception("Failed to refresh solar wind data")
 
 
 def _refresh_aurora_grid():
@@ -67,7 +70,7 @@ def _refresh_aurora_grid():
         grid = get_aurora_grid()
         _cache["aurora_grid"] = grid
     except Exception:
-        pass
+        logger.exception("Failed to refresh aurora grid")
 
 
 def refresh_data():

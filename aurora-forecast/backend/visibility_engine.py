@@ -1,49 +1,48 @@
 """
 Aurora Visibility Engine
 Computes a composite visibility score (0-100) combining:
-  - Aurora probability from OVATION model (with geomagnetic latitude correction)
+  - Aurora probability from OVATION model
   - Sky darkness (solar elevation, moon phase, Bortle-class light pollution)
   - Cloud cover / atmospheric clarity
 
 Also provides photography camera-settings recommendations.
 
 Formula:
-  visibility = 0.50 * aurora_prob_norm
-             + 0.30 * darkness_score
-             + 0.20 * cloud_clarity
-  (all components normalized 0-100 before weighting)
+  visibility_score = 100 * A^1.1 * (0.55 + 0.25 * D + 0.20 * C)
+  where:
+    A = aurora_probability / 100
+    D = sky_darkness / 100
+    C = cloud_clarity / 100
 """
 
 import math
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Any, Dict, List
 
 from ovation_parser import get_aurora_probability_at
 from weather import fetch_weather
 
-# ─── Bortle-class lookup (city coords → Bortle ~1-9) ────────────────────────
-# A minimal table of well-known cities; everything else gets a latitude-based
-# estimate.  Values: (lat, lon, bortle_class).
+# Minimal city lookup for rough Bortle estimation.
 _BORTLE_CITIES = [
     (40.71, -74.01, 9),   # New York
-    (51.51,  -0.13, 9),   # London
-    (48.86,   2.35, 9),   # Paris
+    (51.51, -0.13, 9),    # London
+    (48.86, 2.35, 9),     # Paris
     (35.68, 139.69, 9),   # Tokyo
-    (55.76,  37.62, 8),   # Moscow
-    (28.61,  77.21, 8),   # Delhi
+    (55.76, 37.62, 8),    # Moscow
+    (28.61, 77.21, 8),    # Delhi
     (39.91, 116.40, 8),   # Beijing
-    (34.05,-118.24, 8),   # Los Angeles
+    (34.05, -118.24, 8),  # Los Angeles
     (41.88, -87.63, 8),   # Chicago
-    (37.77,-122.42, 8),   # San Francisco
-    (52.52,  13.41, 8),   # Berlin
-    (59.33,  18.07, 7),   # Stockholm
-    (60.17,  24.94, 7),   # Helsinki
-    (63.43,  10.40, 5),   # Trondheim
+    (37.77, -122.42, 8),  # San Francisco
+    (52.52, 13.41, 8),    # Berlin
+    (59.33, 18.07, 7),    # Stockholm
+    (60.17, 24.94, 7),    # Helsinki
+    (63.43, 10.40, 5),    # Trondheim
     (64.15, -21.94, 5),   # Reykjavik
-    (69.65,  18.96, 4),   # Tromsø
-    (78.23,  15.65, 2),   # Longyearbyen
-    (68.35,  14.40, 3),   # Lofoten
-    (66.50,  25.73, 3),   # Sodankylä
+    (69.65, 18.96, 4),    # Tromso
+    (78.23, 15.65, 2),    # Longyearbyen
+    (68.35, 14.40, 3),    # Lofoten
+    (66.50, 25.73, 3),    # Sodankyla
     (64.84, -18.08, 2),   # Iceland interior
     (62.46, -114.37, 3),  # Yellowknife
     (61.22, -149.90, 5),  # Anchorage
@@ -56,35 +55,236 @@ def compute_visibility(lat: float, lon: float, aurora_grid=None) -> Dict[str, An
     Compute the full aurora visibility score for a given location.
     Returns composite score, sub-scores, and photography recommendations.
     """
-    # 1. Aurora probability (0-100)
-    aurora_prob = get_aurora_probability_at(lat, lon, grid=aurora_grid)
-
-    # 2. Weather / cloud clarity (0-1 → 0-100)
-    weather_data = fetch_weather(lat, lon)
-    cloud_score = weather_data["cloud_score"] * 100.0
-
-    # 3. Darkness score (0-100)
     now_utc = datetime.now(timezone.utc)
+    aurora_prob = get_aurora_probability_at(lat, lon, grid=aurora_grid)
+    weather_data = fetch_weather(lat, lon)
     darkness = compute_darkness_score(lat, lon, now_utc)
-
-    # 4. Geomagnetic-latitude correction (aurora more visible at higher geomlat)
-    geomag_lat = _geomagnetic_latitude(lat, lon)
-
-    # 5. Composite
-    visibility_score = (
-        0.50 * aurora_prob
-        + 0.30 * darkness["darkness_score"]
-        + 0.20 * cloud_score
+    return _build_visibility_payload(
+        lat=lat,
+        lon=lon,
+        aurora_prob=aurora_prob,
+        weather_data=weather_data,
+        darkness=darkness,
+        now_utc=now_utc,
     )
-    visibility_score = round(min(max(visibility_score, 0), 100), 1)
-    rating = _score_to_rating(visibility_score)
 
-    # 6. Photography recommendations
+
+def find_better_viewing_spot(
+    lat: float,
+    lon: float,
+    aurora_grid=None,
+    search_radius_km: float = 180.0,
+    min_improvement: float = 15.0,
+    ring_step_km: float = 30.0,
+    bearings_per_ring: int = 12,
+) -> Dict[str, Any]:
+    """
+    Search outward in distance rings and return the nearest location whose
+    visibility score beats the origin by a meaningful margin.
+    """
+    origin_lon = _normalize_longitude(lon)
+    search_time = datetime.now(timezone.utc)
+    origin_visibility = compute_visibility(lat, origin_lon, aurora_grid=aurora_grid)
+    target_score = origin_visibility["visibility_score"] + min_improvement
+
+    screened_candidates = 0
+    evaluated_candidates = 0
+    near_miss = None
+    recommendation = None
+
+    for radius_km in _build_search_rings(search_radius_km, ring_step_km):
+        ring_matches = []
+        for bearing_deg in _build_bearings(bearings_per_ring):
+            cand_lat, cand_lon = _destination_point(lat, origin_lon, radius_km, bearing_deg)
+            aurora_prob = get_aurora_probability_at(cand_lat, cand_lon, grid=aurora_grid)
+            darkness = compute_darkness_score(cand_lat, cand_lon, search_time)
+            screened_candidates += 1
+
+            # Skip points that cannot clear the requested gain even under clear sky.
+            best_case_score = _compute_visibility_score(
+                aurora_prob=aurora_prob,
+                sky_darkness=darkness["darkness_score"],
+                cloud_clarity=100.0,
+            )
+            if best_case_score < target_score:
+                continue
+
+            weather_data = fetch_weather(cand_lat, cand_lon)
+            candidate_visibility = _build_visibility_payload(
+                lat=cand_lat,
+                lon=cand_lon,
+                aurora_prob=aurora_prob,
+                weather_data=weather_data,
+                darkness=darkness,
+                now_utc=search_time,
+            )
+            evaluated_candidates += 1
+
+            improvement = round(
+                candidate_visibility["visibility_score"] - origin_visibility["visibility_score"],
+                1,
+            )
+            candidate = _summarize_location(candidate_visibility)
+            candidate.update({
+                "distance_km": round(radius_km, 1),
+                "bearing_deg": round(bearing_deg, 1),
+                "direction": _bearing_to_cardinal(bearing_deg),
+                "improvement": improvement,
+            })
+
+            if improvement >= min_improvement:
+                candidate["reason"] = _build_recommendation_reason(
+                    origin_visibility,
+                    candidate_visibility,
+                    candidate["direction"],
+                )
+                ring_matches.append(candidate)
+                continue
+
+            if near_miss is None or improvement > near_miss["improvement"]:
+                near_miss = candidate
+
+        if ring_matches:
+            recommendation = max(
+                ring_matches,
+                key=lambda item: (
+                    item["improvement"],
+                    item["visibility_score"],
+                    item["cloud_score"],
+                ),
+            )
+            break
+
+    response = {
+        "timestamp": search_time.isoformat(),
+        "origin": _summarize_location(origin_visibility),
+        "search_radius_km": round(search_radius_km, 1),
+        "min_improvement": round(min_improvement, 1),
+        "screened_candidates": screened_candidates,
+        "evaluated_candidates": evaluated_candidates,
+        "found_better_spot": recommendation is not None,
+        "destination": recommendation,
+    }
+
+    if recommendation is None:
+        response["message"] = _build_no_recommendation_message(
+            origin_visibility=origin_visibility,
+            near_miss=near_miss,
+            search_radius_km=search_radius_km,
+            min_improvement=min_improvement,
+        )
+        return response
+
+    response["message"] = (
+        f"Nearest meaningful improvement is {recommendation['distance_km']:.0f} km "
+        f"{recommendation['direction']} with a +{recommendation['improvement']:.0f} score gain."
+    )
+    return response
+
+
+def build_aurora_overlay_grid(
+    aurora_grid: Dict[str, Any],
+    cloud_clarity_baseline: float = 70.0,
+) -> Dict[str, Any]:
+    """
+    Build map-overlay values from the OVATION grid.
+
+    The overlay uses the softer heat formula with per-cell darkness and a
+    neutral cloud-clarity baseline so the regional oval stays visible without
+    requiring a live weather call for every global grid cell.
+    """
+    now_utc = datetime.now(timezone.utc)
+    points = []
+
+    for point in aurora_grid.get("points", []):
+        darkness = compute_darkness_score(point["lat"], point["lon"], now_utc)
+        heat_value = _compute_heat_value(
+            aurora_prob=point["prob"],
+            sky_darkness=darkness["darkness_score"],
+            cloud_clarity=cloud_clarity_baseline,
+        )
+        points.append({
+            "lat": point["lat"],
+            "lon": point["lon"],
+            "prob": point["prob"],
+            "heat_value": heat_value,
+        })
+
+    return {
+        "observation_time": aurora_grid.get("observation_time"),
+        "forecast_time": aurora_grid.get("forecast_time"),
+        "point_count": len(points),
+        "overlay_cloud_clarity_baseline": cloud_clarity_baseline,
+        "points": points,
+    }
+
+
+def _compute_visibility_score(
+    aurora_prob: float,
+    sky_darkness: float,
+    cloud_clarity: float,
+) -> float:
+    """
+    Compute the normalized multiplicative visibility score.
+
+    A = aurora_probability / 100
+    D = sky_darkness / 100
+    C = cloud_clarity / 100
+
+    visibility_score = 100 * A^1.1 * (0.55 + 0.25 * D + 0.20 * C)
+    """
+    aurora_norm = _normalize_score(aurora_prob)
+    darkness_norm = _normalize_score(sky_darkness)
+    cloud_norm = _normalize_score(cloud_clarity)
+
+    visibility_score = 100.0 * (aurora_norm ** 1.1) * (
+        0.55 + 0.25 * darkness_norm + 0.20 * cloud_norm
+    )
+    return round(min(max(visibility_score, 0.0), 100.0), 1)
+
+
+def _compute_heat_value(
+    aurora_prob: float,
+    sky_darkness: float,
+    cloud_clarity: float,
+) -> float:
+    """
+    Compute the softer regional map-rendering metric.
+
+    heat_value = 100 * A^1.25 * (0.75 + 0.15 * D + 0.10 * C)
+    """
+    aurora_norm = _normalize_score(aurora_prob)
+    darkness_norm = _normalize_score(sky_darkness)
+    cloud_norm = _normalize_score(cloud_clarity)
+
+    heat_value = 100.0 * (aurora_norm ** 1.25) * (
+        0.75 + 0.15 * darkness_norm + 0.10 * cloud_norm
+    )
+    return round(min(max(heat_value, 0.0), 100.0), 1)
+
+
+def _build_visibility_payload(
+    lat: float,
+    lon: float,
+    aurora_prob: float,
+    weather_data: Dict[str, Any],
+    darkness: Dict[str, Any],
+    now_utc: datetime,
+) -> Dict[str, Any]:
+    """Build the public visibility payload from precomputed components."""
+    cloud_score = weather_data["cloud_score"] * 100.0
+    geomag_lat = _geomagnetic_latitude(lat, lon)
+    visibility_score = _compute_visibility_score(
+        aurora_prob=aurora_prob,
+        sky_darkness=darkness["darkness_score"],
+        cloud_clarity=cloud_score,
+    )
+    rating = _score_to_rating(visibility_score)
     photo = _photo_recommendations(aurora_prob, darkness["darkness_score"])
 
     return {
         "lat": lat,
-        "lon": lon,
+        "lon": _normalize_longitude(lon),
         "visibility_score": visibility_score,
         "rating": rating,
         "aurora_probability": round(aurora_prob, 1),
@@ -101,8 +301,6 @@ def compute_visibility(lat: float, lon: float, aurora_grid=None) -> Dict[str, An
     }
 
 
-# ─── Darkness Score ─────────────────────────────────────────────────────────
-
 def compute_darkness_score(lat: float, lon: float, dt: datetime) -> Dict[str, Any]:
     """
     Darkness score from solar elevation, moon illumination, and Bortle light
@@ -112,9 +310,8 @@ def compute_darkness_score(lat: float, lon: float, dt: datetime) -> Dict[str, An
     moon_illum = moon_illumination(dt)
     bortle = estimate_bortle(lat, lon)
 
-    # Solar component (0-100)
     if sun_elev < -18:
-        solar_score = 100.0               # Astronomical night
+        solar_score = 100.0
     elif sun_elev < -12:
         solar_score = 70.0 + 30.0 * ((-12 - sun_elev) / 6.0)
     elif sun_elev < -6:
@@ -122,12 +319,9 @@ def compute_darkness_score(lat: float, lon: float, dt: datetime) -> Dict[str, An
     elif sun_elev < 0:
         solar_score = 5.0 + 25.0 * (-sun_elev / 6.0)
     else:
-        solar_score = 0.0                  # Daytime
+        solar_score = 0.0
 
-    # Moon penalty (0-30 points, full moon in dark sky)
     moon_penalty = moon_illum * 30.0
-
-    # Bortle penalty: class 1 = 0 pts, class 9 = 40 pts
     bortle_penalty = (bortle - 1) / 8.0 * 40.0
 
     darkness_score = max(0.0, solar_score - moon_penalty - bortle_penalty)
@@ -142,13 +336,12 @@ def compute_darkness_score(lat: float, lon: float, dt: datetime) -> Dict[str, An
     }
 
 
-# ─── Solar Elevation ────────────────────────────────────────────────────────
-
-def solar_elevation(lat: float, lon: float, dt: datetime) -> float:
-    """Solar elevation angle (degrees above horizon), Spencer formula."""
+def _solar_params(dt: datetime) -> tuple:
+    """
+    Return (gamma, declination_rad, eqtime_minutes) for a given UTC datetime.
+    Shared by solar_elevation() and compute_terminator() to avoid duplication.
+    """
     doy = dt.timetuple().tm_yday
-    hour_utc = dt.hour + dt.minute / 60.0 + dt.second / 3600.0
-
     gamma = 2 * math.pi * (doy - 1) / 365.0
     declination = (
         0.006918
@@ -164,8 +357,15 @@ def solar_elevation(lat: float, lon: float, dt: datetime) -> float:
         - 0.014615 * math.cos(2 * gamma)
         - 0.04089 * math.sin(2 * gamma)
     )
+    return gamma, declination, eqtime
 
-    tst = hour_utc * 60 + eqtime + 4 * lon   # minutes
+
+def solar_elevation(lat: float, lon: float, dt: datetime) -> float:
+    """Solar elevation angle in degrees above the horizon."""
+    hour_utc = dt.hour + dt.minute / 60.0 + dt.second / 3600.0
+    _, declination, eqtime = _solar_params(dt)
+
+    tst = hour_utc * 60 + eqtime + 4 * lon
     ha_rad = math.radians(tst / 4.0 - 180.0)
     lat_rad = math.radians(lat)
 
@@ -176,55 +376,47 @@ def solar_elevation(lat: float, lon: float, dt: datetime) -> float:
     return math.degrees(math.asin(max(-1, min(1, sin_elev))))
 
 
-# ─── Moon Illumination ──────────────────────────────────────────────────────
-
 def moon_illumination(dt: datetime) -> float:
-    """Moon illumination fraction (0=new, 1=full). Synodic-month method."""
+    """Moon illumination fraction (0=new, 1=full)."""
     ref = datetime(2024, 1, 11, 11, 57, 0, tzinfo=timezone.utc)
     days = (dt - ref).total_seconds() / 86400.0
     phase = (days % 29.53058867) / 29.53058867
     return 0.5 * (1 - math.cos(2 * math.pi * phase))
 
 
-# ─── Bortle-class Light-Pollution Estimate ──────────────────────────────────
-
 def estimate_bortle(lat: float, lon: float) -> int:
     """
     Return Bortle class 1-9 for a location.
     Checks the small city table first; otherwise uses latitude bands as proxy.
     """
-    # Check nearby cities (within ~1.5 deg)
     best_dist = float("inf")
     best_bortle = None
     for clat, clon, cb in _BORTLE_CITIES:
-        d = (lat - clat) ** 2 + (lon - clon) ** 2
-        if d < best_dist:
-            best_dist = d
+        dist = (lat - clat) ** 2 + (lon - clon) ** 2
+        if dist < best_dist:
+            best_dist = dist
             best_bortle = cb
-    if best_dist < 2.25:   # within ~1.5 degrees
+    if best_dist < 2.25:
         return best_bortle
 
-    # Latitude-band proxy
     alat = abs(lat)
     if alat > 70:
-        return 2      # Polar
+        return 2
     if alat > 60:
-        return 3      # Sub-arctic
+        return 3
     if alat > 55:
-        return 4      # Northern-Scandinavia / Canada
+        return 4
     if alat > 45:
-        return 5      # Mid-latitude countryside
+        return 5
     if alat > 35:
-        return 6      # Suburban mid-lat
-    return 7           # Lower latitudes / tropical urban
+        return 6
+    return 7
 
-
-# ─── Geomagnetic Latitude ──────────────────────────────────────────────────
 
 def _geomagnetic_latitude(lat: float, lon: float) -> float:
     """
-    Convert geographic to geomagnetic latitude using a simple dipole
-    centered at (80.65N, -72.68W).  Good enough for aurora band estimation.
+    Convert geographic to geomagnetic latitude using a simple dipole centered at
+    (80.65N, -72.68W). Good enough for aurora band estimation.
     """
     pole_lat = math.radians(80.65)
     pole_lon = math.radians(-72.68)
@@ -238,72 +430,62 @@ def _geomagnetic_latitude(lat: float, lon: float) -> float:
     return math.degrees(math.asin(max(-1, min(1, sin_gm))))
 
 
-# ─── Photography Recommendations ───────────────────────────────────────────
-
 def _photo_recommendations(aurora_prob: float, darkness: float) -> Dict[str, Any]:
     """
     Camera-exposure recommendations for aurora photography.
-    Based on aurora brightness (proxy from probability + darkness).
-    Returns ISO, aperture, shutter speed, white balance.
     """
-    brightness = aurora_prob * (darkness / 100.0)  # 0-100
+    brightness = aurora_prob * (darkness / 100.0)
 
     if brightness >= 60:
-        # Bright aurora
-        return {"iso": 800, "aperture": "f/2.8", "shutter_sec": 4,  "wb_kelvin": 3500, "tip": "Bright aurora — short exposure to capture detail and movement."}
-    elif brightness >= 30:
-        return {"iso": 1600, "aperture": "f/2.8", "shutter_sec": 8,  "wb_kelvin": 3800, "tip": "Moderate aurora — balanced exposure to capture color."}
-    elif brightness >= 10:
-        return {"iso": 3200, "aperture": "f/2.0", "shutter_sec": 15, "wb_kelvin": 4000, "tip": "Faint aurora — longer exposure, use a tripod and remote shutter."}
-    else:
-        return {"iso": 6400, "aperture": "f/1.8", "shutter_sec": 25, "wb_kelvin": 4200, "tip": "Very faint or no aurora — maximum sensitivity, may only be visible in photos."}
+        return {
+            "iso": 800,
+            "aperture": "f/2.8",
+            "shutter_sec": 4,
+            "wb_kelvin": 3500,
+            "tip": "Bright aurora - short exposure to capture detail and movement.",
+        }
+    if brightness >= 30:
+        return {
+            "iso": 1600,
+            "aperture": "f/2.8",
+            "shutter_sec": 8,
+            "wb_kelvin": 3800,
+            "tip": "Moderate aurora - balanced exposure to capture color.",
+        }
+    if brightness >= 10:
+        return {
+            "iso": 3200,
+            "aperture": "f/2.0",
+            "shutter_sec": 15,
+            "wb_kelvin": 4000,
+            "tip": "Faint aurora - longer exposure, use a tripod and remote shutter.",
+        }
+    return {
+        "iso": 6400,
+        "aperture": "f/1.8",
+        "shutter_sec": 25,
+        "wb_kelvin": 4200,
+        "tip": "Very faint or no aurora - maximum sensitivity, may only be visible in photos.",
+    }
 
-
-# ─── Terminator (day/night boundary) ───────────────────────────────────────
 
 def compute_terminator(dt: datetime = None, n_points: int = 180) -> list:
     """
-    Return a polyline tracing the solar terminator (sun elevation ~ 0).
-    Uses an analytic inversion: for each longitude, solve for the latitude
-    where sin(elev) = 0  →  lat = -arctan(cos(ha) / tan(decl)).
-    Returns {lat, lon} list AND the sub-solar point for night-polygon logic.
+    Return a polyline tracing the solar terminator (sun elevation near 0).
     """
     if dt is None:
         dt = datetime.now(timezone.utc)
 
-    doy = dt.timetuple().tm_yday
     hour_utc = dt.hour + dt.minute / 60.0 + dt.second / 3600.0
-    gamma = 2 * math.pi * (doy - 1) / 365.0
-
-    # Solar declination
-    decl = (
-        0.006918
-        - 0.399912 * math.cos(gamma)
-        + 0.070257 * math.sin(gamma)
-        - 0.006758 * math.cos(2 * gamma)
-        + 0.000907 * math.sin(2 * gamma)
-    )
-    # Equation of time (minutes)
-    eqtime = 229.18 * (
-        0.000075
-        + 0.001868 * math.cos(gamma)
-        - 0.032077 * math.sin(gamma)
-        - 0.014615 * math.cos(2 * gamma)
-        - 0.04089 * math.sin(2 * gamma)
-    )
+    _, decl, eqtime = _solar_params(dt)
 
     points = []
-    for i in range(n_points + 1):
-        lon_deg = -180.0 + (360.0 / n_points) * i
-        tst = hour_utc * 60 + eqtime + 4 * lon_deg  # true solar time (min)
+    for idx in range(n_points + 1):
+        lon_deg = -180.0 + (360.0 / n_points) * idx
+        tst = hour_utc * 60 + eqtime + 4 * lon_deg
         ha = math.radians(tst / 4.0 - 180.0)
 
-        # Analytic terminator latitude:
-        # sin(elev) = sin(lat)*sin(decl) + cos(lat)*cos(decl)*cos(ha) = 0
-        # => tan(lat) = -cos(ha)*cos(decl)/sin(decl)  (if decl != 0)
-        # => lat = atan(-cos(ha) / tan(decl))
         if abs(decl) < 1e-9:
-            # Equinox: terminator at ±90° where cos(ha)=0, else use simplified
             lat_deg = math.degrees(math.atan2(-math.cos(ha), 1e-9))
         else:
             lat_deg = math.degrees(math.atan(-math.cos(ha) / math.tan(decl)))
@@ -314,16 +496,128 @@ def compute_terminator(dt: datetime = None, n_points: int = 180) -> list:
     return points
 
 
-# ─── Helpers ────────────────────────────────────────────────────────────────
-
 def _score_to_rating(score: float) -> str:
     if score >= 80:
         return "Excellent"
-    elif score >= 60:
+    if score >= 60:
         return "Good"
-    elif score >= 40:
+    if score >= 40:
         return "Moderate"
-    elif score >= 20:
+    if score >= 20:
         return "Low"
-    else:
-        return "Very Low"
+    return "Very Low"
+
+
+def _normalize_score(value: float) -> float:
+    """Clamp a 0-100 score into the normalized 0-1 range."""
+    return min(max(value, 0.0), 100.0) / 100.0
+
+
+def _normalize_longitude(lon: float) -> float:
+    return ((lon + 180.0) % 360.0) - 180.0
+
+
+def _summarize_location(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the subset of fields needed in recommendation responses."""
+    return {
+        "lat": round(payload["lat"], 4),
+        "lon": round(_normalize_longitude(payload["lon"]), 4),
+        "visibility_score": payload["visibility_score"],
+        "rating": payload["rating"],
+        "aurora_probability": payload["aurora_probability"],
+        "darkness_score": payload["darkness_score"],
+        "cloud_score": payload["cloud_score"],
+        "timestamp": payload["timestamp"],
+    }
+
+
+def _build_search_rings(search_radius_km: float, ring_step_km: float) -> List[float]:
+    rings = []
+    radius = max(10.0, ring_step_km)
+    while radius < search_radius_km:
+        rings.append(radius)
+        radius += ring_step_km
+    rings.append(search_radius_km)
+    return rings
+
+
+def _build_bearings(bearings_per_ring: int) -> List[float]:
+    return [idx * (360.0 / bearings_per_ring) for idx in range(bearings_per_ring)]
+
+
+def _destination_point(
+    lat: float,
+    lon: float,
+    distance_km: float,
+    bearing_deg: float,
+) -> tuple[float, float]:
+    """Project a point from origin along a bearing and distance on a sphere."""
+    earth_radius_km = 6371.0088
+    angular_distance = distance_km / earth_radius_km
+    lat1 = math.radians(lat)
+    lon1 = math.radians(lon)
+    bearing = math.radians(bearing_deg)
+
+    lat2 = math.asin(
+        math.sin(lat1) * math.cos(angular_distance)
+        + math.cos(lat1) * math.sin(angular_distance) * math.cos(bearing)
+    )
+    lon2 = lon1 + math.atan2(
+        math.sin(bearing) * math.sin(angular_distance) * math.cos(lat1),
+        math.cos(angular_distance) - math.sin(lat1) * math.sin(lat2),
+    )
+    return math.degrees(lat2), _normalize_longitude(math.degrees(lon2))
+
+
+def _bearing_to_cardinal(bearing_deg: float) -> str:
+    directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+    idx = int(((bearing_deg % 360.0) + 22.5) // 45.0) % len(directions)
+    return directions[idx]
+
+
+def _build_recommendation_reason(
+    origin_visibility: Dict[str, Any],
+    candidate_visibility: Dict[str, Any],
+    direction: str,
+) -> str:
+    reasons = []
+    if candidate_visibility["aurora_probability"] - origin_visibility["aurora_probability"] >= 8:
+        reasons.append("higher aurora probability")
+    if candidate_visibility["cloud_score"] - origin_visibility["cloud_score"] >= 10:
+        reasons.append("clearer sky")
+    if candidate_visibility["darkness_score"] - origin_visibility["darkness_score"] >= 10:
+        reasons.append("darker sky")
+
+    if not reasons:
+        reasons.append("a stronger combined visibility balance")
+
+    if len(reasons) == 1:
+        return f"{direction} improves conditions mainly through {reasons[0]}."
+    return (
+        f"{direction} improves conditions through "
+        f"{', '.join(reasons[:-1])} and {reasons[-1]}."
+    )
+
+
+def _build_no_recommendation_message(
+    origin_visibility: Dict[str, Any],
+    near_miss: Dict[str, Any] | None,
+    search_radius_km: float,
+    min_improvement: float,
+) -> str:
+    if near_miss and near_miss["improvement"] > 0:
+        return (
+            f"No spot within {search_radius_km:.0f} km clears the requested "
+            f"+{min_improvement:.0f} score gain. Best nearby option is "
+            f"{near_miss['distance_km']:.0f} km {near_miss['direction']} at "
+            f"{near_miss['visibility_score']:.0f}, only +{near_miss['improvement']:.0f}."
+        )
+    if origin_visibility["visibility_score"] >= 60:
+        return (
+            f"No meaningfully better spot was found within {search_radius_km:.0f} km. "
+            "Your current location is already competitive for viewing."
+        )
+    return (
+        f"No meaningfully better spot was found within {search_radius_km:.0f} km. "
+        "Nearby conditions appear similarly limited by aurora strength, cloud, or darkness."
+    )
