@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aurora Forecast Platform – Team DOMINATORS</title>
+    <meta name="theme-color" content="#06101a">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+
+    <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div id="app">
+
+    <!-- Header -->
+    <header id="header">
+        <div class="header-left">
+            <span class="eyebrow">Orion Astrathon: Team DOMINATORS</span>
+            <div class="title-block">
+                <h1>Aurora Forecast</h1>
+                <span class="subtitle">Hyper-local aurora nowcasting for observers and astrophotographers</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="status-pill">
+                <div id="status-indicator" class="status-dot offline"></div>
+                <span id="status-text">Connecting...</span>
+            </div>
+            <span id="data-source" class="meta-text"></span>
+            <span id="last-update" class="meta-text"></span>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div id="main-content">
+
+        <!-- Map -->
+        <div id="map-container">
+            <div id="map"></div>
+            <div class="map-vignette"></div>
+            <!-- Custom zoom buttons: vertically centered on left edge of map -->
+            <div id="map-zoom-btns">
+                <button id="zoom-in" class="map-zoom-btn" aria-label="Zoom in">+</button>
+                <button id="zoom-out" class="map-zoom-btn" aria-label="Zoom out">&#x2212;</button>
+            </div>
+
+            <div id="map-focus" class="map-overlay-card">
+                <div class="map-overlay-label">Interactive OVATION Map</div>
+                <div class="map-overlay-copy">Seamless east-west world wrap with a softer aurora heat layer for honest regional context.</div>
+            </div>
+            <!-- Floating Kp chart overlay -->
+            <div id="kp-chart-box" class="map-overlay-card">
+                <div id="kp-chart-title">Kp Index (last 4 h)</div>
+                <canvas id="kp-canvas" width="260" height="80"></canvas>
+            </div>
+            <div id="map-legend" class="map-overlay-card">
+                <div class="map-legend-title">Legend</div>
+                <div class="legend-item">
+                    <span class="legend-gradient"></span>
+                    <span class="legend-copy">Aurora heat value low to high: hidden, faint band, moderate glow, strong oval</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-line"></span>
+                    <span class="legend-copy">Day / night terminator</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-night"></span>
+                    <span class="legend-copy">Night-side shading</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-pin"></span>
+                    <span class="legend-copy">Selected observation point</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Side Panel -->
+        <aside id="side-panel">
+
+            <!-- Alert Banner -->
+            <div id="alert-banner" class="alert-banner hidden">
+                <div class="alert-icon">&#9888;</div>
+                <div id="alert-content">
+                    <div class="alert-header">
+                        <div id="alert-title">Aurora Alert</div>
+                        <div id="alert-meta" class="alert-meta"></div>
+                    </div>
+                    <div id="alert-messages"></div>
+                </div>
+            </div>
+
+            <!-- Visibility Score Card -->
+            <div class="card card-hero" id="visibility-card">
+                <div class="card-header">
+                    <h2>Visibility Score</h2>
+                    <span id="score-chip" class="card-chip subtle-chip">Awaiting data</span>
+                </div>
+                <div id="score-display">
+                    <div id="score-ring">
+                        <svg viewBox="0 0 120 120">
+                            <circle class="ring-bg" cx="60" cy="60" r="52" />
+                            <circle class="ring-fg" id="score-arc" cx="60" cy="60" r="52" />
+                        </svg>
+                        <div id="score-value">--</div>
+                        <div id="score-label">Loading</div>
+                    </div>
+                </div>
+                <div id="score-breakdown">
+                    <div class="breakdown-item">
+                        <span class="breakdown-label">Aurora Prob</span>
+                        <div class="breakdown-bar"><div class="bar-fill" id="bar-aurora"></div></div>
+                        <span class="breakdown-value" id="val-aurora">--</span>
+                    </div>
+                    <div class="breakdown-item">
+                        <span class="breakdown-label">Sky Darkness</span>
+                        <div class="breakdown-bar"><div class="bar-fill" id="bar-darkness"></div></div>
+                        <span class="breakdown-value" id="val-darkness">--</span>
+                    </div>
+                    <div class="breakdown-item">
+                        <span class="breakdown-label">Cloud Clarity</span>
+                        <div class="breakdown-bar"><div class="bar-fill" id="bar-cloud"></div></div>
+                        <span class="breakdown-value" id="val-cloud">--</span>
+                    </div>
+                </div>
+                <div id="score-summary" class="score-summary">
+                    Select a point on the map to see how aurora probability, darkness, and cloud clarity combine right now.
+                </div>
+            </div>
+
+            <!-- Solar Wind Card -->
+            <div class="card" id="solar-wind-card">
+                <div class="card-header">
+                    <h2>Solar Wind</h2>
+                    <span class="card-chip subtle-chip">Nowcast Context</span>
+                </div>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <span class="data-label">Bz (GSM)</span>
+                        <span class="data-value" id="sw-bz">-- nT</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">Speed</span>
+                        <span class="data-value" id="sw-speed">-- km/s</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">Density</span>
+                        <span class="data-value" id="sw-density">-- /cm&#179;</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">Bt</span>
+                        <span class="data-value" id="sw-bt">-- nT</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">Est. Kp</span>
+                        <span class="data-value" id="sw-kp">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">dBz/dt</span>
+                        <span class="data-value" id="sw-dbz">-- nT/min</span>
+                    </div>
+                </div>
+                <div id="sw-summary" class="card-note">Live solar wind context updates automatically as NOAA data refreshes.</div>
+            </div>
+
+            <!-- Location + Weather Card -->
+            <div class="card" id="location-card">
+                <div class="card-header">
+                    <h2>Location &amp; Weather</h2>
+                    <span class="card-chip subtle-chip">Selected Point</span>
+                </div>
+                <div id="location-focus" class="location-focus">Click the map or use your device location for a local viewing forecast.</div>
+                <div class="coordinate-inputs">
+                    <label class="field-control">
+                        <span class="field-label">Latitude</span>
+                        <input id="coord-lat" class="select-control" type="number" min="-90" max="90" step="0.001" value="64.000">
+                    </label>
+                    <label class="field-control">
+                        <span class="field-label">Longitude</span>
+                        <input id="coord-lon" class="select-control" type="number" min="-180" max="180" step="0.001" value="-21.000">
+                    </label>
+                </div>
+                <button id="btn-go-coordinates" class="btn-secondary">Go to Coordinates</button>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <span class="data-label">Latitude</span>
+                        <span class="data-value" id="loc-lat">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">Longitude</span>
+                        <span class="data-value" id="loc-lon">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">Temperature</span>
+                        <span class="data-value" id="loc-temp">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">Cloud Cover</span>
+                        <span class="data-value" id="loc-cloud">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">Bortle Class</span>
+                        <span class="data-value" id="loc-bortle">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">Geomag. Lat</span>
+                        <span class="data-value" id="loc-gmlat">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">Moon Illum.</span>
+                        <span class="data-value" id="loc-moon">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">Visibility</span>
+                        <span class="data-value" id="loc-vis">--</span>
+                    </div>
+                </div>
+                <button id="btn-locate" class="btn-primary">Use My Location</button>
+            </div>
+
+            <!-- Better Viewing Spot Card -->
+            <div class="card" id="better-spot-card">
+                <div class="card-header">
+                    <h2>Better Viewing Spot</h2>
+                    <span class="card-chip subtle-chip">On Demand</span>
+                </div>
+                <div id="better-spot-status" class="card-note">
+                    Search nearby only when needed to find the nearest location with a meaningfully stronger visibility score.
+                </div>
+                <div class="recommend-controls">
+                    <label class="field-control">
+                        <span class="field-label">Search Radius</span>
+                        <div class="slider-row">
+                            <input type="range" id="better-radius" class="slider-control" min="30" max="400" step="10" value="180">
+                            <span id="better-radius-label" class="slider-value">180 km</span>
+                        </div>
+                    </label>
+                    <label class="field-control">
+                        <span class="field-label">Min Gain</span>
+                        <div class="slider-row">
+                            <input type="range" id="better-improvement" class="slider-control" min="5" max="40" step="1" value="15">
+                            <span id="better-improvement-label" class="slider-value">+15</span>
+                        </div>
+                    </label>
+                </div>
+                <div id="better-spot-result" class="recommend-result is-hidden">
+                    <div class="recommend-result-head">
+                        <div>
+                            <div class="recommend-title">Suggested Nearby Spot</div>
+                            <div id="better-spot-meta" class="recommend-meta">Awaiting recommendation</div>
+                        </div>
+                        <span id="better-spot-badge" class="card-chip chip-positive">+0</span>
+                    </div>
+                    <div class="data-grid recommend-grid">
+                        <div class="data-item">
+                            <span class="data-label">Current Score</span>
+                            <span class="data-value" id="better-current-score">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Suggested Score</span>
+                            <span class="data-value" id="better-destination-score">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Gain</span>
+                            <span class="data-value" id="better-improvement-value">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Distance</span>
+                            <span class="data-value" id="better-distance">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Direction</span>
+                            <span class="data-value" id="better-direction">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Latitude</span>
+                            <span class="data-value" id="better-lat">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Longitude</span>
+                            <span class="data-value" id="better-lon">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Aurora Prob.</span>
+                            <span class="data-value" id="better-aurora">--</span>
+                        </div>
+                    </div>
+                    <div id="better-spot-reason" class="score-summary">
+                        Recommendations appear here after a search.
+                    </div>
+                </div>
+                <button id="btn-better-spot" class="btn-primary">Find Better Viewing Spot</button>
+                <button id="btn-route" class="btn-secondary is-hidden">Get Directions</button>
+                <div id="route-note" class="route-note is-hidden">
+                    Route preview stays on the map only after you request directions. Turn-by-turn navigation opens externally.
+                </div>
+            </div>
+
+            <!-- Photography Advisor Card -->
+            <div class="card" id="photo-card">
+                <div class="card-header">
+                    <h2>Photography Advisor</h2>
+                    <span class="card-chip subtle-chip">Field Guide</span>
+                </div>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <span class="data-label">ISO</span>
+                        <span class="data-value" id="photo-iso">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">Aperture</span>
+                        <span class="data-value" id="photo-aperture">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">Shutter</span>
+                        <span class="data-value" id="photo-shutter">--</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">White Balance</span>
+                        <span class="data-value" id="photo-wb">--</span>
+                    </div>
+                </div>
+                <div id="photo-tip" class="card-tip"></div>
+            </div>
+
+            <!-- Community Sightings Card -->
+            <div class="card" id="sightings-card">
+                <div class="card-header">
+                    <h2>Community Sightings</h2>
+                    <span class="card-chip subtle-chip">Validation Layer</span>
+                </div>
+                <div id="sightings-list" class="sightings-list">
+                    <p class="text-muted">No recent sightings.</p>
+                </div>
+                <button id="btn-report" class="btn-secondary">Report a Sighting</button>
+            </div>
+
+            <!-- Info -->
+            <div class="card card-info">
+                <p>OVATION probability, NOAA solar wind, local weather, and sky darkness are combined into a transparent field-ready visibility score. Optimized for low-light use and fast decision-making.</p>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Sighting Report Modal -->
+    <div id="sighting-modal" class="modal hidden">
+        <div class="modal-inner">
+            <h3>Report Aurora Sighting</h3>
+            <label>Intensity (1-5)
+                <input type="range" id="report-intensity" min="1" max="5" value="3">
+                <span id="report-intensity-label">3</span>
+            </label>
+            <label>Message
+                <input type="text" id="report-message" placeholder="Aurora spotted!" maxlength="280">
+            </label>
+            <div class="modal-buttons">
+                <button id="btn-submit-sighting" class="btn-primary">Submit</button>
+                <button id="btn-cancel-sighting" class="btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast notification -->
+    <div id="toast" class="toast hidden"></div>
+
+    <!-- Offline Banner -->
+    <div id="offline-banner" class="offline-banner hidden">
+        <span class="offline-banner-icon">&#9888;</span>
+        <span>You are offline. Showing last cached forecast data. Live updates will resume when connectivity is restored.</span>
+    </div>
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+    if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+            navigator.serviceWorker.register("/sw.js").catch(() => {});
+        });
+    }
+</script>
+</body>
+</html>

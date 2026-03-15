@@ -78,8 +78,12 @@ def _fetch_mag_data(url: str) -> dict:
         resp = requests.get(url, timeout=TIMEOUT)
         resp.raise_for_status()
         rows = resp.json()
+        if not isinstance(rows, list) or len(rows) < 2:
+            return _empty_mag()
         # Header row then data rows
         for row in reversed(rows[1:]):
+            if not isinstance(row, list) or len(row) < 7:
+                continue
             bz = _safe_float(row[3])
             if bz is not None:
                 return {
@@ -112,7 +116,11 @@ def _fetch_plasma_data(url: str) -> dict:
         resp = requests.get(url, timeout=TIMEOUT)
         resp.raise_for_status()
         rows = resp.json()
+        if not isinstance(rows, list) or len(rows) < 2:
+            return _empty_plasma()
         for row in reversed(rows[1:]):
+            if not isinstance(row, list) or len(row) < 4:
+                continue
             speed = _safe_float(row[2])
             if speed is not None:
                 return {
@@ -130,22 +138,35 @@ def _fetch_plasma_data(url: str) -> dict:
 
 def _compute_dbz_dt() -> Optional[float]:
     """
-    Compute rate of change of Bz (nT/min) over last 10 samples.
+    Compute rate of change of Bz (nT/min) over last 10 samples using
+    actual timestamp deltas from the ring buffer.
     Negative = Bz turning more southward = substorm precursor.
     """
     if len(_bz_history) < 5:
         return None
     recent = list(_bz_history)[-10:]
-    bz_vals = [s["bz"] for s in recent if s["bz"] is not None]
-    if len(bz_vals) < 3:
+    valid = [(s["time"], s["bz"]) for s in recent if s["bz"] is not None]
+    if len(valid) < 3:
         return None
-    # Simple linear rate: (last - first) / number-of-minutes
-    n_minutes = max(len(bz_vals) - 1, 1)  # ~1 sample per minute
-    rate = (bz_vals[-1] - bz_vals[0]) / n_minutes
-    return round(rate, 3)
+    try:
+        t0 = datetime.fromisoformat(valid[0][0])
+        t1 = datetime.fromisoformat(valid[-1][0])
+        elapsed_min = (t1 - t0).total_seconds() / 60.0
+        if elapsed_min < 0.1:
+            return None
+        rate = (valid[-1][1] - valid[0][1]) / elapsed_min
+        return round(rate, 3)
+    except Exception:
+        return None
 
 
 # ─── Data-gap detection ─────────────────────────────────────────────────────
+
+_NOAA_TIMESTAMP_FORMATS = (
+    "%Y-%m-%d %H:%M:%S.%f",  # DSCOVR 1-day feed (has microseconds)
+    "%Y-%m-%d %H:%M:%S",     # ACE 2-hour feed (no microseconds)
+)
+
 
 def _detect_data_gap(mag: dict, plasma: dict) -> bool:
     """Flag if either source has stale or missing data (>5 min old)."""
@@ -154,12 +175,16 @@ def _detect_data_gap(mag: dict, plasma: dict) -> bool:
         tag = src.get("time_tag")
         if tag is None:
             return True
-        try:
-            t = datetime.strptime(tag, "%Y-%m-%d %H:%M:%S.%f").replace(tzinfo=timezone.utc)
-            if (now - t).total_seconds() > 300:
-                return True
-        except Exception:
-            pass
+        parsed = None
+        for fmt in _NOAA_TIMESTAMP_FORMATS:
+            try:
+                parsed = datetime.strptime(tag, fmt).replace(tzinfo=timezone.utc)
+                break
+            except ValueError:
+                continue
+        # Treat an unparseable timestamp the same as missing data
+        if parsed is None or (now - parsed).total_seconds() > 300:
+            return True
     return False
 
 
