@@ -1,5 +1,7 @@
 # Orion Astrathon: Team DOMINATORS
 
+**Website Live at:** https://thedominatorsbackend.onrender.com/
+
 Aurora Forecast Platform is a submission-ready space weather decision system that transforms live NOAA auroral and solar-wind feeds plus local weather into a location-specific visibility score, map overlay, and actionable field guidance.
 
 This document is a full technical report aligned with the Problem Statement (PS), including:
@@ -11,6 +13,11 @@ This document is a full technical report aligned with the Problem Statement (PS)
 - Data links and implementation evidence
 
 ---
+## 0. Team Overview
+1. [Aryan Sisodiya](https://github.com/InfinityxR9)
+2. [Daksh Rathi](https://github.com/dakshrathi-india)
+3. [Farhan Alam](https://github.com/frozen-afk)
+4. [Mannat Kathuria](https://github.com/mannatkathuria)
 
 ## 1. Problem Statement Interpretation
 
@@ -310,6 +317,10 @@ Known constraint:
 
 ## 7. API Inventory (Detailed)
 
+### 7.0 Health
+- GET /health and HEAD /health
+  - Health checkpoint for server status and monitoring
+
 ### 7.1 Forecast and diagnostics
 - GET /solar-wind
   - Returns magnetic/plasma values, derivative trends, source metadata, and gap indicators.
@@ -497,3 +508,8 @@ Team DOMINATORS implementation satisfies all core PS deliverables and all reques
 - Bonus modules including better spot routing logic, community layer, photography advisor, and robust PWA offline mode
 
 This README is the canonical technical report for project evaluation, engineering handoff, and future extension.
+
+---
+<h1 style='text-align:center;'>
+Created with ❤️ By <b>The DOMINATORS</b>
+</h1>
