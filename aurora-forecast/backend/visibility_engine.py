@@ -8,7 +8,7 @@ Computes a composite visibility score (0-100) combining:
 Also provides photography camera-settings recommendations.
 
 Formula:
-  visibility_score = 100 * A^1.1 * (0.55 + 0.25 * D + 0.20 * C)
+  visibility_score = 100 * A^0.9 * (0.10 + 0.50 * D + 0.40 * C)
   where:
     A = aurora_probability / 100
     D = sky_darkness / 100
@@ -231,14 +231,21 @@ def _compute_visibility_score(
     D = sky_darkness / 100
     C = cloud_clarity / 100
 
-    visibility_score = 100 * A^1.1 * (0.55 + 0.25 * D + 0.20 * C)
+    visibility_score = 100 * A^0.9 * (0.10 + 0.50*D + 0.40*C)
+
+    This ensures:
+    - Aurora probability is the dominant driver.
+    - Darkness and cloud clarity are genuine multipliers (not just bonuses).
+    - In daylight (D=0) or full cloud (C=0) the score drops significantly.
+    - The 0.10 floor prevents a hard zero when one factor is temporarily
+      unavailable, keeping the score directionally informative.
     """
     aurora_norm = _normalize_score(aurora_prob)
     darkness_norm = _normalize_score(sky_darkness)
     cloud_norm = _normalize_score(cloud_clarity)
 
-    visibility_score = 100.0 * (aurora_norm ** 1.1) * (
-        0.55 + 0.25 * darkness_norm + 0.20 * cloud_norm
+    visibility_score = 100.0 * (aurora_norm ** 0.9) * (
+        0.10 + 0.50 * darkness_norm + 0.40 * cloud_norm
     )
     return round(min(max(visibility_score, 0.0), 100.0), 1)
 
@@ -469,9 +476,36 @@ def _photo_recommendations(aurora_prob: float, darkness: float) -> Dict[str, Any
     }
 
 
+def compute_terminator_with_sun(dt: datetime = None) -> Dict[str, Any]:
+    """
+    Return terminator points plus sub-solar position for the frontend
+    to determine the night side of the terminator.
+    """
+    if dt is None:
+        dt = datetime.now(timezone.utc)
+    pts = compute_terminator(dt)
+    _, decl, eqtime = _solar_params(dt)
+    sub_solar_lat = round(math.degrees(decl), 2)
+    hour_utc = dt.hour + dt.minute / 60.0 + dt.second / 3600.0
+    sub_solar_lon = round(((180.0 - (hour_utc * 60 + eqtime) / 4.0) % 360) - 180, 2)
+    return {
+        "points": pts,
+        "sub_solar_lat": sub_solar_lat,
+        "sub_solar_lon": sub_solar_lon,
+    }
+
+
 def compute_terminator(dt: datetime = None, n_points: int = 180) -> list:
     """
-    Return a polyline tracing the solar terminator (sun elevation near 0).
+    Return a polyline tracing the solar terminator (sun elevation = 0).
+
+    For each longitude, find the latitude where:
+      sin(lat)*sin(decl) + cos(lat)*cos(decl)*cos(ha) = 0
+    => tan(lat) = -cos(ha)/tan(decl)
+
+    Uses atan2 for correct quadrant handling across all seasons.
+    Also returns the sub-solar latitude so the frontend can determine
+    which side of the terminator is night.
     """
     if dt is None:
         dt = datetime.now(timezone.utc)
@@ -485,10 +519,17 @@ def compute_terminator(dt: datetime = None, n_points: int = 180) -> list:
         tst = hour_utc * 60 + eqtime + 4 * lon_deg
         ha = math.radians(tst / 4.0 - 180.0)
 
-        if abs(decl) < 1e-9:
-            lat_deg = math.degrees(math.atan2(-math.cos(ha), 1e-9))
+        cos_ha = math.cos(ha)
+        sin_decl = math.sin(decl)
+        cos_decl = math.cos(decl)
+
+        # Terminator latitude: where solar elevation = 0
+        # sin(lat)*sin(decl) + cos(lat)*cos(decl)*cos(ha) = 0
+        if abs(cos_decl) < 1e-12:
+            lat_deg = 0.0
         else:
-            lat_deg = math.degrees(math.atan(-math.cos(ha) / math.tan(decl)))
+            lat_rad = math.atan2(-cos_ha * cos_decl, sin_decl)
+            lat_deg = math.degrees(lat_rad)
 
         lat_deg = max(-90, min(90, lat_deg))
         points.append({"lat": round(lat_deg, 2), "lon": round(lon_deg, 2)})

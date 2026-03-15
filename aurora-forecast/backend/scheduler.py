@@ -52,16 +52,20 @@ def _refresh_solar_wind():
         _cache["alerts"] = alerts
 
         # Push Kp to time-series
+        kp_val = alerts.get("kp_estimate", 0)
         _kp_history.append({
             "time": datetime.now(timezone.utc).isoformat(),
-            "kp": alerts["kp_estimate"],
-            "bz": sw["magnetic_field"].get("bz_gsm"),
-            "speed": sw["plasma"].get("speed"),
+            "kp": kp_val,
+            "bz": sw.get("magnetic_field", {}).get("bz_gsm"),
+            "speed": sw.get("plasma", {}).get("speed"),
         })
 
         _cache["last_updated"] = datetime.now(timezone.utc).isoformat()
     except Exception:
         logger.exception("Failed to refresh solar wind data")
+        # Ensure cache always has a last_updated even on failure
+        if _cache["last_updated"] is None:
+            _cache["last_updated"] = datetime.now(timezone.utc).isoformat()
 
 
 def _refresh_aurora_grid():

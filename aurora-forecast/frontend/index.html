@@ -218,20 +218,17 @@
                 <div class="recommend-controls">
                     <label class="field-control">
                         <span class="field-label">Search Radius</span>
-                        <select id="better-radius" class="select-control">
-                            <option value="120">120 km</option>
-                            <option value="180" selected>180 km</option>
-                            <option value="240">240 km</option>
-                            <option value="320">320 km</option>
-                        </select>
+                        <div class="slider-row">
+                            <input type="range" id="better-radius" class="slider-control" min="30" max="400" step="10" value="180">
+                            <span id="better-radius-label" class="slider-value">180 km</span>
+                        </div>
                     </label>
                     <label class="field-control">
                         <span class="field-label">Min Gain</span>
-                        <select id="better-improvement" class="select-control">
-                            <option value="15" selected>+15 score</option>
-                            <option value="20">+20 score</option>
-                            <option value="25">+25 score</option>
-                        </select>
+                        <div class="slider-row">
+                            <input type="range" id="better-improvement" class="slider-control" min="5" max="40" step="1" value="15">
+                            <span id="better-improvement-label" class="slider-value">+15</span>
+                        </div>
                     </label>
                 </div>
                 <div id="better-spot-result" class="recommend-result is-hidden">

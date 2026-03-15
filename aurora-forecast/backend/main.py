@@ -21,7 +21,6 @@ from solar_wind import get_solar_wind_data, get_bz_history
 from ovation_parser import get_aurora_grid
 from visibility_engine import (
     build_aurora_overlay_grid,
-    compute_terminator,
     compute_visibility,
     find_better_viewing_spot,
 )
@@ -118,8 +117,9 @@ async def alerts():
 @app.get("/terminator")
 async def terminator():
     """Day/night terminator line for the map overlay."""
-    pts = compute_terminator()
-    return JSONResponse(content={"points": pts})
+    from visibility_engine import compute_terminator_with_sun
+    data = compute_terminator_with_sun()
+    return JSONResponse(content=data)
 
 
 @app.get("/kp-timeline")
@@ -220,11 +220,12 @@ async def _ws_broadcast_loop():
         cache = get_cache()
         if not _ws_clients or cache.get("solar_wind") is None:
             continue
+        alerts_data = cache.get("alerts") or {}
         payload = json.dumps({
             "type": "update",
             "solar_wind": cache["solar_wind"],
-            "alerts": cache["alerts"],
-            "kp_latest": cache["alerts"]["kp_estimate"] if cache["alerts"] else None,
+            "alerts": alerts_data,
+            "kp_latest": alerts_data.get("kp_estimate"),
             "last_updated": cache["last_updated"],
         })
         # Iterate over a snapshot so concurrent removes from websocket_endpoint

@@ -38,45 +38,62 @@ def evaluate_alerts(
     alert_active = False
 
     # ── Southward Bz ────────────────────────────────────────────
-    if bz is not None and bz < -7:
+    if bz is not None and bz < -5:
         alert_active = True
-        sev = "high" if bz < -15 else "moderate"
+        if bz < -20:
+            sev = "high"
+            msg = f"Strongly southward Bz: {bz:.1f} nT — Major geomagnetic storm conditions, aurora visible at lower latitudes"
+        elif bz < -10:
+            sev = "high"
+            msg = f"Southward Bz: {bz:.1f} nT — Active aurora likely, check your sky if dark and clear"
+        else:
+            sev = "moderate"
+            msg = f"Moderately southward Bz: {bz:.1f} nT — Aurora activity enhanced at high latitudes"
         alerts.append({
             "type": "southward_bz",
-            "message": f"Southward Bz detected: {bz:.1f} nT \u2014 Enhanced aurora likely",
+            "message": msg,
             "value": bz,
-            "threshold": -7,
+            "threshold": -5,
             "severity": sev,
         })
 
     # ── High-speed stream ───────────────────────────────────────
-    if speed is not None and speed > 500:
+    if speed is not None and speed > 450:
         alert_active = True
-        sev = "high" if speed > 700 else "moderate"
+        if speed > 700:
+            sev = "high"
+            msg = f"Very fast solar wind: {speed:.0f} km/s — Strong aurora driving, oval expanding equatorward"
+        elif speed > 550:
+            sev = "moderate"
+            msg = f"Elevated solar wind speed: {speed:.0f} km/s — Sustained aurora activity likely"
+        else:
+            sev = "low"
+            msg = f"Above-average solar wind: {speed:.0f} km/s — Mildly elevated aurora potential"
         alerts.append({
             "type": "high_speed_stream",
-            "message": f"High-speed solar wind: {speed:.0f} km/s \u2014 Aurora activity elevated",
+            "message": msg,
             "value": speed,
-            "threshold": 500,
+            "threshold": 450,
             "severity": sev,
         })
 
     # ── Strong total field ──────────────────────────────────────
-    if bt is not None and bt > 15:
+    if bt is not None and bt > 12:
         alert_active = True
+        sev = "high" if bt > 25 else "moderate"
         alerts.append({
             "type": "strong_bt",
-            "message": f"Strong interplanetary field: {bt:.1f} nT",
+            "message": f"Strong interplanetary magnetic field: {bt:.1f} nT — Increased energy coupling to magnetosphere",
             "value": bt,
-            "threshold": 15,
-            "severity": "moderate",
+            "threshold": 12,
+            "severity": sev,
         })
 
     # ── Density enhancement ─────────────────────────────────────
     if density is not None and density > 15:
         alerts.append({
             "type": "density_enhancement",
-            "message": f"Elevated solar wind density: {density:.1f} /cm\u00b3",
+            "message": f"Elevated solar wind density: {density:.1f} /cm\u00b3 — May enhance aurora brightness on impact",
             "value": density,
             "threshold": 15,
             "severity": "low",
@@ -88,7 +105,7 @@ def evaluate_alerts(
         sev = "high" if dbz_dt < -3.0 else "moderate"
         alerts.append({
             "type": "substorm_warning",
-            "message": f"Rapid Bz deflection: {dbz_dt:+.2f} nT/min \u2014 Substorm likely",
+            "message": f"Rapid Bz deflection: {dbz_dt:+.2f} nT/min — Substorm onset possible, watch for sudden brightening",
             "value": dbz_dt,
             "threshold": -1.5,
             "severity": sev,
@@ -99,7 +116,7 @@ def evaluate_alerts(
         alert_active = True
         alerts.append({
             "type": "visibility_threshold",
-            "message": f"Visibility score {visibility_score:.0f} exceeds your threshold ({user_threshold:.0f})",
+            "message": f"Visibility score {visibility_score:.0f} exceeds your threshold of {user_threshold:.0f} — Conditions favorable for viewing",
             "value": visibility_score,
             "threshold": user_threshold,
             "severity": "high" if visibility_score >= 70 else "moderate",
@@ -122,6 +139,7 @@ def evaluate_alerts(
         "overall_severity": overall,
         "kp_estimate": kp_estimate,
         "alerts": alerts,
+        "summary": _build_alert_summary(overall, kp_estimate, alerts, bz, speed),
         "conditions": {
             "bz_gsm": bz,
             "bt": bt,
@@ -133,6 +151,31 @@ def evaluate_alerts(
     }
 
 
+def _build_alert_summary(
+    severity: str,
+    kp: float,
+    alerts: List[Dict[str, Any]],
+    bz: Optional[float],
+    speed: Optional[float],
+) -> str:
+    """Build a concise human-readable summary of the current alert state."""
+    if severity == "none":
+        if kp >= 2:
+            return f"Quiet conditions with Kp {kp:.1f}. No active triggers but minor aurora may be visible at high latitudes."
+        return "Geomagnetically quiet. No aurora alerts at this time."
+    types = {a["type"] for a in alerts}
+    parts = []
+    if "substorm_warning" in types:
+        parts.append("Substorm onset possible")
+    if "southward_bz" in types and bz is not None:
+        parts.append(f"Bz {bz:.1f} nT driving reconnection")
+    if "high_speed_stream" in types and speed is not None:
+        parts.append(f"fast solar wind at {speed:.0f} km/s")
+    if not parts:
+        parts.append("elevated solar wind conditions")
+    return f"Kp {kp:.1f} — {'; '.join(parts)}."
+
+
 def estimate_kp(
     bz: Optional[float] = None,
     speed: Optional[float] = None,
@@ -142,29 +185,45 @@ def estimate_kp(
     Kp estimate using the Newell coupling function:
       coupling ∝ v^(4/3) * Bt^(2/3) * sin^8(theta_c / 2)
     where theta_c = clock angle of the IMF.
-    Simplified here without By from GSM (uses Bz only for sin^8 proxy).
+
+    Uses a two-component approach: the Newell coupling drives the storm
+    component, plus a baseline from solar wind speed alone (recurrent
+    high-speed streams raise Kp even with neutral Bz).
     """
     if speed is None:
         speed = 400.0
     if bt is None:
-        bt = abs(bz) if bz is not None else 1.0
+        bt = abs(bz) if bz is not None else 2.0
     if bz is None:
-        return 0.0
+        bz = 0.0
 
-    # Clock angle proxy (theta=180 when purely southward)
-    if bt > 0:
-        cos_theta = max(-1, min(1, bz / bt))
-    else:
-        cos_theta = 1.0
+    # Ensure bt >= |bz| (total field can't be less than one component)
+    bt = max(bt, abs(bz), 0.5)
+
+    # Clock angle: theta=180° when purely southward, 0° when northward
+    cos_theta = max(-1.0, min(1.0, bz / bt))
     theta = math.acos(cos_theta)
-    sin8_half = math.sin(theta / 2) ** 8
+    sin_half = math.sin(theta / 2)
 
-    coupling = (speed ** (4.0 / 3.0)) * (bt ** (2.0 / 3.0)) * sin8_half
+    # Newell coupling function (sin^8 is very peaky; use sin^4 for
+    # smoother response that better tracks observed Kp)
+    coupling = (speed ** (4.0 / 3.0)) * (bt ** (2.0 / 3.0)) * (sin_half ** 4)
 
-    if coupling <= 0:
-        return 0.0
+    # Baseline Kp from speed alone (high-speed streams)
+    if speed > 600:
+        speed_kp = 3.0 + (speed - 600) / 100.0
+    elif speed > 450:
+        speed_kp = 1.5 + 1.5 * (speed - 450) / 150.0
+    else:
+        speed_kp = max(0.0, 1.5 * (speed - 300) / 200.0)
 
-    # Empirical log-scaling calibrated:
-    #   coupling 1e3 → Kp~1, 1e4 → Kp~3, 1e5 → Kp~5, 5e5 → Kp~7
-    kp = 1.2 * math.log10(max(coupling, 1)) - 2.5
+    # Coupling-driven Kp (calibrated against observed storm Kp):
+    #   log10~3.5 → Kp~2,  ~4.0 → Kp~3.5,  ~4.5 → Kp~5,  ~5.0 → Kp~6.5
+    if coupling > 0:
+        log_c = math.log10(max(coupling, 1))
+        coupling_kp = 2.6 * log_c - 6.5
+    else:
+        coupling_kp = 0.0
+
+    kp = max(coupling_kp, speed_kp)
     return round(min(max(kp, 0), 9), 1)

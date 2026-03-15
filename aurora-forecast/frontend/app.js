@@ -45,6 +45,12 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("report-intensity").addEventListener("input", (event) => {
         document.getElementById("report-intensity-label").textContent = event.target.value;
     });
+    document.getElementById("better-radius").addEventListener("input", (event) => {
+        document.getElementById("better-radius-label").textContent = `${event.target.value} km`;
+    });
+    document.getElementById("better-improvement").addEventListener("input", (event) => {
+        document.getElementById("better-improvement-label").textContent = `+${event.target.value}`;
+    });
 });
 
 async function loadAll() {
@@ -221,33 +227,39 @@ async function loadAlerts() {
     try {
         const response = await fetch(`${API}/alerts`);
         const data = await response.json();
-        const banner = document.getElementById("alert-banner");
-        const messages = document.getElementById("alert-messages");
-        const meta = document.getElementById("alert-meta");
-
-        if (data.kp_estimate != null) {
-            setText("sw-kp", data.kp_estimate.toFixed(1));
-        }
-
-        if (data.alert_active) {
-            banner.classList.remove("hidden");
-            banner.className = `alert-banner alert-${data.overall_severity}`;
-            setText("alert-title", `${capitalize(data.overall_severity)} aurora alert`);
-            setText(
-                "alert-meta",
-                `${formatDashboardTime(data.timestamp)} | ${data.alerts.length} trigger${
-                    data.alerts.length === 1 ? "" : "s"
-                }`
-            );
-            messages.innerHTML = data.alerts.map(renderAlertMessage).join("");
-        } else {
-            banner.className = "alert-banner hidden";
-            setText("alert-title", "Aurora Alert");
-            meta.textContent = "";
-            messages.innerHTML = "";
-        }
+        renderAlerts(data);
     } catch (error) {
         console.error("alerts:", error);
+    }
+}
+
+function renderAlerts(data) {
+    const banner = document.getElementById("alert-banner");
+    const messages = document.getElementById("alert-messages");
+    const meta = document.getElementById("alert-meta");
+
+    if (data.kp_estimate != null) {
+        setText("sw-kp", data.kp_estimate.toFixed(1));
+    }
+
+    if (data.alert_active && data.alerts && data.alerts.length > 0) {
+        banner.classList.remove("hidden");
+        banner.className = `alert-banner alert-${data.overall_severity}`;
+        setText("alert-title", `Kp ${data.kp_estimate != null ? data.kp_estimate.toFixed(1) : '--'} — ${capitalize(data.overall_severity)} Aurora Alert`);
+        setText(
+            "alert-meta",
+            `${formatDashboardTime(data.timestamp)} | ${data.alerts.length} trigger${
+                data.alerts.length === 1 ? "" : "s"
+            }`
+        );
+        messages.innerHTML = data.alerts.map(renderAlertMessage).join("");
+    } else {
+        banner.classList.remove("hidden");
+        banner.className = "alert-banner alert-quiet";
+        setText("alert-title", "No Active Alerts");
+        const summary = data.summary || "Geomagnetically quiet. No aurora alerts at this time.";
+        meta.textContent = formatDashboardTime(data.timestamp || new Date().toISOString());
+        messages.innerHTML = `<div class="alert-msg"><div class="alert-msg-title">${escHtml(summary)}</div></div>`;
     }
 }
 
@@ -279,13 +291,18 @@ async function loadTerminator() {
         }
 
         const pts = data.points.map((point) => [point.lat, point.lon]);
-        const avgLat = pts.reduce((sum, point) => sum + point[0], 0) / pts.length;
-        const nightPole = avgLat > 0 ? -90 : 90;
+
+        // Determine night direction from sub-solar point.
+        // Night pole is opposite to where the sun is: if sun is over
+        // the northern hemisphere, night extends toward the south pole.
+        const subSolarLat = data.sub_solar_lat || 0;
+        const nightPole = subSolarLat >= 0 ? -90 : 90;
 
         WORLD_WRAP_OFFSETS.forEach((offset, idx) => {
             const shiftedPts = pts.map(([latValue, lonValue]) => [latValue, lonValue + offset]);
             terminatorLayers[idx].setLatLngs(shiftedPts);
 
+            // Build a closed polygon from the terminator line to the night pole
             const nightPoly = [
                 ...shiftedPts,
                 [nightPole, shiftedPts[shiftedPts.length - 1][1]],
@@ -411,12 +428,21 @@ function updateScoreDisplay(data) {
 
 function renderBetterSpotResult(data) {
     const statusText = data.message || DEFAULT_BETTER_SPOT_STATUS;
-    setText("better-spot-status", `${statusText} Snapshot ${formatDashboardTime(data.timestamp)}.`);
+    setText("better-spot-status", statusText);
 
     if (!data.found_better_spot || !data.destination) {
         document.getElementById("better-spot-result").classList.add("is-hidden");
         document.getElementById("btn-route").classList.add("is-hidden");
         document.getElementById("route-note").classList.add("is-hidden");
+
+        // Show origin score context so the user knows why no spot was found
+        if (data.origin) {
+            const originScore = data.origin.visibility_score;
+            const note = originScore >= 60
+                ? `Your current score is ${formatScore(originScore)} — already competitive for viewing.`
+                : `Your current score is ${formatScore(originScore)}. Nearby conditions are similarly limited.`;
+            setText("better-spot-status", `${statusText} ${note}`);
+        }
         return;
     }
 
@@ -719,7 +745,9 @@ function connectWebSocket() {
                 setText("sw-bt", fmtV(magnetic.bt, " nT", 1));
                 setText("sw-summary", buildSolarWindSummary(data.solar_wind));
             }
-            if (data.kp_latest != null) {
+            if (data.alerts) {
+                renderAlerts(data.alerts);
+            } else if (data.kp_latest != null) {
                 setText("sw-kp", data.kp_latest.toFixed(1));
             }
             if (data.last_updated) {
@@ -887,23 +915,33 @@ function buildScoreSummary(data) {
     const aurora = data.aurora_probability ?? 0;
     const darkness = data.darkness_score ?? 0;
     const cloud = data.cloud_score ?? 0;
+    const score = data.visibility_score ?? 0;
 
-    if (aurora < 20) {
-        return "The score stays low because aurora probability is weak here. Dark or clear sky helps only when there is aurora signal to amplify.";
+    if (aurora < 5) {
+        return "No significant aurora probability at this location. The OVATION model shows minimal geomagnetic activity here. Try a location closer to the auroral oval.";
     }
-    if (cloud < 35) {
-        return "Aurora signal is present, but cloud obstruction is suppressing the final score. A clearer nearby site would materially improve the outlook.";
+    if (aurora < 20 && score < 30) {
+        return "Aurora probability is weak here. Dark skies and clear weather alone cannot produce a high score — aurora signal must be present first.";
     }
-    if (darkness < 35) {
-        return "Aurora signal is present, but twilight, moonlight, or skyglow is limiting contrast at this location.";
+    if (!data.is_dark && darkness < 20) {
+        return "It is currently too bright at this location (sun above horizon or civil twilight). Aurora viewing requires astronomical darkness. Check back after sunset.";
     }
-    if (data.visibility_score >= 70) {
-        return "Strong local viewing conditions. Aurora probability is driving the score, with darkness and cloud clarity reinforcing it rather than acting independently.";
+    if (cloud < 25) {
+        return "Cloud obstruction is severely limiting visibility. Aurora signal is present, but you need clearer skies. Try the 'Better Viewing Spot' search for a less cloudy site nearby.";
     }
-    if (data.visibility_score >= 45) {
-        return "Promising but mixed conditions. Aurora probability is present, and better darkness or clearer sky nearby could still improve the decision score.";
+    if (darkness < 35 && aurora >= 20) {
+        return "Aurora signal is present, but twilight, moonlight, or light pollution is reducing contrast. Find a darker location or wait for deeper darkness.";
     }
-    return "Conditions are marginal because the combined aurora signal is limited. Monitor the map for stronger aurora probability before relying on good sky alone.";
+    if (score >= 75) {
+        return "Excellent viewing conditions. Strong aurora probability combined with dark skies and clear weather — head outside now if you can!";
+    }
+    if (score >= 55) {
+        return "Good conditions for aurora viewing. The score reflects a solid combination of aurora activity, darkness, and sky clarity.";
+    }
+    if (score >= 35) {
+        return "Moderate conditions. Aurora is detectable but one or more factors (cloud, brightness, or weak aurora) is holding the score back. Photography may still capture it.";
+    }
+    return "Marginal conditions. The combined aurora signal is limited. Monitor the Kp chart for sudden increases, or search nearby for a better spot.";
 }
 
 function buildSolarWindSummary(data) {

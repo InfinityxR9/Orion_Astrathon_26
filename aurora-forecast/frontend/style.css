@@ -593,6 +593,26 @@ body::before {
     border-color: rgba(255, 217, 117, 0.24);
 }
 
+.alert-quiet {
+    background: linear-gradient(180deg, rgba(14, 28, 40, 0.95), rgba(10, 20, 30, 0.95));
+    border-color: rgba(94, 212, 255, 0.18);
+}
+
+.alert-quiet .alert-icon {
+    color: var(--accent-cyan);
+    opacity: 0.6;
+}
+
+.alert-none {
+    background: linear-gradient(180deg, rgba(14, 28, 40, 0.95), rgba(10, 20, 30, 0.95));
+    border-color: rgba(94, 212, 255, 0.18);
+}
+
+.alert-none .alert-icon {
+    color: var(--accent-cyan);
+    opacity: 0.6;
+}
+
 .alert-icon {
     font-size: 1.4rem;
     line-height: 1;
@@ -786,6 +806,67 @@ body::before {
     box-shadow: 0 0 0 3px rgba(94, 212, 255, 0.12);
 }
 
+.slider-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.slider-control {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(117, 151, 191, 0.18);
+    outline: none;
+    cursor: pointer;
+}
+
+.slider-control::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent-cyan);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 0 8px rgba(94, 212, 255, 0.4);
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.slider-control::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+    box-shadow: 0 0 14px rgba(94, 212, 255, 0.6);
+}
+
+.slider-control::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent-cyan);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 0 8px rgba(94, 212, 255, 0.4);
+    cursor: pointer;
+}
+
+.slider-control::-moz-range-track {
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(117, 151, 191, 0.18);
+}
+
+.slider-value {
+    min-width: 52px;
+    text-align: right;
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--accent-cyan);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
 .recommend-result {
     margin-top: 14px;
     display: flex;
@@ -812,6 +893,14 @@ body::before {
 .route-note {
     color: var(--text-muted);
     font-size: 0.76rem;
+}
+
+.route-note {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(96, 129, 166, 0.06);
+    border: 1px solid rgba(130, 162, 201, 0.08);
 }
 
 .recommend-grid {
